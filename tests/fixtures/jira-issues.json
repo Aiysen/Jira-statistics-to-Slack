@@ -1,0 +1,44 @@
+[
+  {
+    "key": "PROJ-123",
+    "fields": {
+      "summary": "Исправить баг с авторизацией",
+      "status": {
+        "name": "In Progress"
+      },
+      "assignee": {
+        "displayName": "Иван Иванов",
+        "accountId": "123456",
+        "accountType": "atlassian"
+      },
+      "updated": "2026-01-11T15:30:00.000Z"
+    }
+  },
+  {
+    "key": "PROJ-124",
+    "fields": {
+      "summary": "Добавить логирование",
+      "status": {
+        "name": "Done"
+      },
+      "assignee": null,
+      "updated": "2026-01-11T12:00:00.000Z"
+    }
+  },
+  {
+    "key": "PROJ-125",
+    "fields": {
+      "summary": "Обновить документацию",
+      "status": {
+        "name": "In Progress"
+      },
+      "assignee": {
+        "displayName": "Мария Сидорова",
+        "accountId": "789012",
+        "accountType": "atlassian"
+      },
+      "updated": "2026-01-11T10:15:00.000Z"
+    }
+  }
+]
+

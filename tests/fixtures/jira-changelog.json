@@ -1,0 +1,57 @@
+{
+  "PROJ-123": [
+    {
+      "id": "20001",
+      "author": {
+        "displayName": "Иван Иванов",
+        "accountId": "123456",
+        "accountType": "atlassian"
+      },
+      "created": "2026-01-11T15:00:00.000Z",
+      "items": [
+        {
+          "field": "status",
+          "fromString": "To Do",
+          "toString": "In Progress"
+        }
+      ]
+    }
+  ],
+  "PROJ-124": [
+    {
+      "id": "20002",
+      "author": {
+        "displayName": "Иван Иванов",
+        "accountId": "123456",
+        "accountType": "atlassian"
+      },
+      "created": "2026-01-11T12:00:00.000Z",
+      "items": [
+        {
+          "field": "status",
+          "fromString": "In Progress",
+          "toString": "Done"
+        }
+      ]
+    }
+  ],
+  "PROJ-125": [
+    {
+      "id": "20003",
+      "author": {
+        "displayName": "Мария Сидорова",
+        "accountId": "789012",
+        "accountType": "atlassian"
+      },
+      "created": "2026-01-11T10:00:00.000Z",
+      "items": [
+        {
+          "field": "assignee",
+          "fromString": "",
+          "toString": "Мария Сидорова"
+        }
+      ]
+    }
+  ]
+}
+

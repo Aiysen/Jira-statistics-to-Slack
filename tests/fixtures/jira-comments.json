@@ -1,0 +1,38 @@
+{
+  "PROJ-123": [
+    {
+      "id": "10001",
+      "author": {
+        "displayName": "Пётр Петров",
+        "accountId": "345678",
+        "accountType": "atlassian"
+      },
+      "body": "Нашёл причину бага",
+      "created": "2026-01-11T14:00:00.000Z"
+    },
+    {
+      "id": "10002",
+      "author": {
+        "displayName": "Мария Сидорова",
+        "accountId": "789012",
+        "accountType": "atlassian"
+      },
+      "body": "Отлично, жду фикса",
+      "created": "2026-01-11T14:30:00.000Z"
+    }
+  ],
+  "PROJ-124": [
+    {
+      "id": "10003",
+      "author": {
+        "displayName": "Иван Иванов",
+        "accountId": "123456",
+        "accountType": "atlassian"
+      },
+      "body": "Логирование добавлено",
+      "created": "2026-01-11T11:00:00.000Z"
+    }
+  ],
+  "PROJ-125": []
+}
+
