@@ -4,7 +4,7 @@ const dedup = require('./utils/dedup');
 
 class HealthServer {
   constructor() {
-    this.port = parseInt(process.env.HEALTH_CHECK_PORT) || 3000;
+    this.port = parseInt(process.env.PORT || process.env.HEALTH_CHECK_PORT) || 3000;
     this.startTime = Date.now();
     this.server = null;
   }
