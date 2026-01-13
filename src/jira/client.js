@@ -29,30 +29,85 @@ class JiraClient {
   }
 
   async searchIssues() {
-    let jql = 'updated >= -24h';
-    
-    if (this.projects && this.projects.length > 0) {
-      const projectsFilter = `project in (${this.projects.join(',')})`;
-      jql = `${projectsFilter} AND ${jql}`;
+    logger.debug('Searching Jira issues using Agile API');
+
+    const yesterday = Date.now() - 24 * 60 * 60 * 1000;
+    const allIssues = [];
+
+    try {
+      const boards = await retry(
+        async () => {
+          const response = await this.client.get('/rest/agile/1.0/board', {
+            params: { maxResults: 50 }
+          });
+          return response.data.values || [];
+        },
+        { context: { endpoint: '/rest/agile/1.0/board' } }
+      );
+
+      logger.info(`Found ${boards.length} boards`);
+
+      for (const board of boards) {
+        if (this.projects && this.projects.length > 0) {
+          const boardProjects = board.location?.projectKey || board.location?.name;
+          if (boardProjects && !this.projects.includes(boardProjects)) {
+            continue;
+          }
+        }
+
+        try {
+          let startAt = 0;
+          const maxResults = 50;
+          let hasMore = true;
+
+          while (hasMore) {
+            const issues = await retry(
+              async () => {
+                const response = await this.client.get(`/rest/agile/1.0/board/${board.id}/issue`, {
+                  params: { 
+                    startAt, 
+                    maxResults,
+                    fields: 'key,summary,status,assignee,updated'
+                  }
+                });
+                return response.data;
+              },
+              { context: { endpoint: `/rest/agile/1.0/board/${board.id}/issue` } }
+            );
+
+            const recentIssues = (issues.issues || []).filter(issue => {
+              const updated = new Date(issue.fields.updated).getTime();
+              return updated >= yesterday;
+            });
+
+            allIssues.push(...recentIssues);
+
+            hasMore = !issues.isLast && issues.issues.length === maxResults;
+            startAt += maxResults;
+
+            if (allIssues.length >= 100) {
+              hasMore = false;
+            }
+          }
+        } catch (error) {
+          logger.warn(`Failed to fetch issues from board ${board.id}`, { 
+            boardId: board.id, 
+            error: error.message 
+          });
+        }
+      }
+
+      const uniqueIssues = Array.from(
+        new Map(allIssues.map(issue => [issue.key, issue])).values()
+      );
+
+      logger.info('Jira issues fetched', { count: uniqueIssues.length });
+      return uniqueIssues;
+
+    } catch (error) {
+      logger.error('Failed to search issues via Agile API', { error: error.message });
+      throw error;
     }
-
-    const params = {
-      jql,
-      fields: ['key', 'summary', 'status', 'assignee', 'updated'],
-      expand: ['changelog'],
-      maxResults: 100
-    };
-
-    logger.debug('Searching Jira issues', { jql });
-
-    return retry(
-      async () => {
-        const response = await this.client.get('/rest/api/3/search', { params });
-        logger.info('Jira issues fetched', { count: response.data.issues.length });
-        return response.data.issues;
-      },
-      { context: { endpoint: '/rest/api/3/search' } }
-    );
   }
 
   async getIssueComments(issueKey) {
