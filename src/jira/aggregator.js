@@ -3,6 +3,7 @@ const logger = require('../utils/logger');
 class JiraAggregator {
   constructor(jiraClient) {
     this.jiraClient = jiraClient;
+    this.IN_PROGRESS_STATUSES = ['Analysing', 'In Development', 'Testing Dev Env', 'Testing Prod Env'];
   }
 
   async aggregateData() {
@@ -22,16 +23,13 @@ class JiraAggregator {
             tasksCount: 0,
             usersCount: 0,
             commentsCount: 0,
-            statusCounts: {},
             processingTime
           }
         };
       }
 
-      const tasksData = [];
       const userActivityMap = new Map();
       let totalComments = 0;
-      const statusCounts = {};
 
       for (const issue of issues) {
         const issueKey = issue.key;
@@ -42,15 +40,9 @@ class JiraAggregator {
             this.jiraClient.getIssueChangelog(issueKey)
           ]);
 
-          const taskData = this._processIssue(issue, comments, changelog);
-          tasksData.push(taskData);
-
           totalComments += comments.length;
 
-          const status = taskData.status;
-          statusCounts[status] = (statusCounts[status] || 0) + 1;
-
-          this._aggregateUserActivity(userActivityMap, issueKey, comments, changelog);
+          this._aggregateUserActivity(userActivityMap, issue, comments, changelog);
 
         } catch (error) {
           logger.warn('Failed to process issue', { 
@@ -60,14 +52,11 @@ class JiraAggregator {
         }
       }
 
-      tasksData.sort((a, b) => a.key.localeCompare(b.key));
-
       const usersData = this._prepareUsersData(userActivityMap);
 
       const processingTime = ((Date.now() - startTime) / 1000).toFixed(1);
 
       logger.info('Data aggregation completed', {
-        tasksCount: tasksData.length,
         usersCount: usersData.length,
         commentsCount: totalComments,
         processingTime
@@ -75,13 +64,10 @@ class JiraAggregator {
 
       return {
         hasActivity: true,
-        tasks: tasksData,
         users: usersData,
         summary: {
-          tasksCount: tasksData.length,
           usersCount: usersData.length,
           commentsCount: totalComments,
-          statusCounts,
           processingTime
         }
       };
@@ -96,79 +82,162 @@ class JiraAggregator {
     }
   }
 
-  _processIssue(issue, comments, changelog) {
-    const assignee = issue.fields.assignee 
-      ? issue.fields.assignee.displayName 
-      : 'Нет исполнителя';
+  _aggregateUserActivity(userActivityMap, issue, comments, changelog) {
+    const issueKey = issue.key;
+    const issueSummary = issue.fields.summary;
+    const currentStatus = issue.fields.status.name;
+    const isInProgress = this.IN_PROGRESS_STATUSES.includes(currentStatus);
 
-    const activeUsers = new Set();
+    const statusChanges = this._analyzeStatusChanges(changelog, issueKey, issueSummary);
+    
+    statusChanges.forEach(change => {
+      if (!change.author || !this._isHumanUser(change.author)) return;
 
-    comments.forEach(comment => {
-      if (comment.author && this._isHumanUser(comment.author)) {
-        activeUsers.add(comment.author.displayName || comment.author.accountId);
-      }
-    });
-
-    changelog.forEach(history => {
-      if (history.author && this._isHumanUser(history.author)) {
-        activeUsers.add(history.author.displayName || history.author.accountId);
-      }
-    });
-
-    return {
-      key: issue.key,
-      summary: issue.fields.summary,
-      status: issue.fields.status.name,
-      assignee,
-      updated: issue.fields.updated,
-      activeUsers: Array.from(activeUsers).sort()
-    };
-  }
-
-  _aggregateUserActivity(userActivityMap, issueKey, comments, changelog) {
-    const processUser = (user) => {
-      if (!user || !this._isHumanUser(user)) {
-        return null;
-      }
-
-      const userName = user.displayName || `Пользователь удалён (ID: ${user.accountId})`;
+      const userName = change.author.displayName || `Пользователь удалён (ID: ${change.author.accountId})`;
       
       if (!userActivityMap.has(userName)) {
         userActivityMap.set(userName, {
           name: userName,
-          commentsCount: 0,
-          tasks: new Set()
+          statusChanges: [],
+          comments: [],
+          tasksInProgress: []
         });
       }
 
-      return userName;
-    };
+      const userData = userActivityMap.get(userName);
+      userData.statusChanges.push(change);
+    });
 
     comments.forEach(comment => {
-      const userName = processUser(comment.author);
-      if (userName) {
-        const userData = userActivityMap.get(userName);
-        userData.commentsCount++;
-        userData.tasks.add(issueKey);
+      if (!comment.author || !this._isHumanUser(comment.author)) return;
+
+      const userName = comment.author.displayName || `Пользователь удалён (ID: ${comment.author.accountId})`;
+      
+      if (!userActivityMap.has(userName)) {
+        userActivityMap.set(userName, {
+          name: userName,
+          statusChanges: [],
+          comments: [],
+          tasksInProgress: []
+        });
       }
+
+      const userData = userActivityMap.get(userName);
+      userData.comments.push({
+        issueKey,
+        issueSummary
+      });
     });
 
-    changelog.forEach(history => {
-      const userName = processUser(history.author);
-      if (userName) {
-        const userData = userActivityMap.get(userName);
-        userData.tasks.add(issueKey);
+    if (isInProgress && issue.fields.assignee && this._isHumanUser(issue.fields.assignee)) {
+      const userName = issue.fields.assignee.displayName || `Пользователь удалён (ID: ${issue.fields.assignee.accountId})`;
+      
+      if (!userActivityMap.has(userName)) {
+        userActivityMap.set(userName, {
+          name: userName,
+          statusChanges: [],
+          comments: [],
+          tasksInProgress: []
+        });
       }
-    });
+
+      const userData = userActivityMap.get(userName);
+      if (!userData.tasksInProgress.find(t => t.issueKey === issueKey)) {
+        userData.tasksInProgress.push({
+          issueKey,
+          issueSummary,
+          status: currentStatus
+        });
+      }
+    }
+  }
+
+  _analyzeStatusChanges(changelog, issueKey, issueSummary) {
+    const changes = [];
+    const yesterday = Date.now() - 24 * 60 * 60 * 1000;
+
+    const statusHistories = changelog
+      .filter(history => {
+        const created = new Date(history.created).getTime();
+        return created >= yesterday;
+      })
+      .flatMap(history => {
+        const statusItems = history.items.filter(item => item.field === 'status');
+        return statusItems.map(item => ({
+          author: history.author,
+          created: new Date(history.created),
+          fromStatus: item.fromString,
+          toStatus: item.toString
+        }));
+      })
+      .sort((a, b) => a.created - b.created);
+
+    if (statusHistories.length === 0) return changes;
+
+    let i = 0;
+    while (i < statusHistories.length) {
+      const change = statusHistories[i];
+      const authorName = change.author?.displayName || change.author?.accountId;
+      
+      let finalToStatus = change.toStatus;
+      let timeInPreviousStatus = 0;
+      let fromStatus = change.fromStatus;
+      
+      if (i > 0) {
+        const prevChange = statusHistories[i - 1];
+        timeInPreviousStatus = (change.created - prevChange.created) / 1000;
+      }
+
+      let j = i + 1;
+      while (j < statusHistories.length) {
+        const nextChange = statusHistories[j];
+        const nextAuthorName = nextChange.author?.displayName || nextChange.author?.accountId;
+        const timeDiff = (nextChange.created - change.created) / 1000;
+
+        if (authorName === nextAuthorName && timeDiff <= 120) {
+          finalToStatus = nextChange.toStatus;
+          j++;
+        } else {
+          break;
+        }
+      }
+
+      changes.push({
+        issueKey,
+        issueSummary,
+        author: change.author,
+        fromStatus,
+        toStatus: finalToStatus,
+        timeInPreviousStatus: Math.round(timeInPreviousStatus),
+        timestamp: change.created
+      });
+
+      i = j;
+    }
+
+    return changes;
   }
 
   _prepareUsersData(userActivityMap) {
-    const usersData = Array.from(userActivityMap.values()).map(userData => ({
-      name: userData.name,
-      commentsCount: userData.commentsCount,
-      tasksCount: userData.tasks.size,
-      tasks: Array.from(userData.tasks).sort()
-    }));
+    const usersData = Array.from(userActivityMap.values())
+      .filter(userData => {
+        return userData.statusChanges.length > 0 || 
+               userData.comments.length > 0 || 
+               userData.tasksInProgress.length > 0;
+      })
+      .map(userData => {
+        const uniqueComments = new Map();
+        userData.comments.forEach(c => {
+          uniqueComments.set(c.issueKey, c);
+        });
+
+        return {
+          name: userData.name,
+          statusChanges: userData.statusChanges,
+          comments: Array.from(uniqueComments.values()),
+          tasksInProgress: userData.tasksInProgress
+        };
+      });
 
     usersData.sort((a, b) => a.name.localeCompare(b.name));
 
@@ -181,4 +250,3 @@ class JiraAggregator {
 }
 
 module.exports = JiraAggregator;
-

@@ -15,12 +15,10 @@ class SlackFormatter {
     }
 
     const mainMessage = this._formatMainMessage(dateStr, data.summary);
-    const tasksMessage = this._formatTasksMessage(data.tasks);
     const usersMessage = this._formatUsersMessage(data.users);
 
     return {
       mainMessage,
-      tasksMessage,
       usersMessage
     };
   }
@@ -45,79 +43,30 @@ class SlackFormatter {
   }
 
   _formatMainMessage(dateStr, summary) {
-    const statusList = Object.entries(summary.statusCounts)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([status, count]) => `• ${status}: ${count}`)
-      .join('\n');
-
     return `📊 Отчёт активности Jira
 Период: последние 24 часа (до ${dateStr})
 
-📈 Сводка:
-• Активных задач: ${summary.tasksCount}
-• Активных пользователей: ${summary.usersCount}
-• Комментариев: ${summary.commentsCount}
-• Время обработки: ${summary.processingTime} сек
+👥 Активных исполнителей: ${summary.usersCount}
+💬 Комментариев: ${summary.commentsCount}
+⏱️ Время обработки: ${summary.processingTime} сек
 
-📌 Задачи по статусам:
-${statusList}
-
-Подробности в треде 👇`;
-  }
-
-  _formatTasksMessage(tasks) {
-    const header = `🎯 Активные задачи (${tasks.length})\n\n`;
-    
-    let message = header;
-    let truncated = false;
-    let includedTasks = 0;
-
-    for (const task of tasks) {
-      const taskBlock = this._formatTask(task);
-      
-      if (message.length + taskBlock.length > this.maxMessageLength - 100) {
-        truncated = true;
-        break;
-      }
-      
-      message += taskBlock;
-      includedTasks++;
-    }
-
-    if (truncated) {
-      const remaining = tasks.length - includedTasks;
-      message += `\n... и ещё ${remaining} задач`;
-    }
-
-    return message;
-  }
-
-  _formatTask(task) {
-    const url = `${this.jiraBaseURL}/browse/${task.key}`;
-    const activeUsers = task.activeUsers.length > 0 
-      ? task.activeUsers.join(', ') 
-      : 'Нет';
-
-    return `<${url}|[${task.key}] ${task.summary}>
-├ Статус: ${task.status}
-├ Исполнитель: ${task.assignee}
-└ Активность: ${activeUsers}
-
-`;
+Подробности по каждому исполнителю в треде 👇`;
   }
 
   _formatUsersMessage(users) {
-    const header = `👥 Активность пользователей (${users.length})\n\n`;
-    
-    let message = header;
-    let truncated = false;
+    if (users.length === 0) {
+      return '👥 Активность исполнителей\n\nНет активности за последние 24 часа';
+    }
+
+    let message = `👥 Активность исполнителей (${users.length})\n\n`;
     let includedUsers = 0;
 
     for (const user of users) {
       const userBlock = this._formatUser(user);
       
       if (message.length + userBlock.length > this.maxMessageLength - 100) {
-        truncated = true;
+        const remaining = users.length - includedUsers;
+        message += `\n... и ещё ${remaining} исполнителей`;
         break;
       }
       
@@ -125,23 +74,69 @@ ${statusList}
       includedUsers++;
     }
 
-    if (truncated) {
-      const remaining = users.length - includedUsers;
-      message += `\n... и ещё ${remaining} пользователей`;
-    }
-
     return message;
   }
 
   _formatUser(user) {
-    const tasksList = user.tasks.join(', ');
+    let block = `*${user.name}*\n`;
 
-    return `${user.name}
-├ Комментариев: ${user.commentsCount}
-├ Задач: ${user.tasksCount}
-└ ${tasksList}
+    if (user.statusChanges.length > 0) {
+      block += `\n📋 *Изменения статусов:*\n`;
+      user.statusChanges.forEach(change => {
+        const url = `${this.jiraBaseURL}/browse/${change.issueKey}`;
+        const timeStr = this._formatTimeInStatus(change.timeInPreviousStatus);
+        block += `  • <${url}|${change.issueKey}> — \`${change.fromStatus}\` → \`${change.toStatus}\` ${timeStr}\n`;
+      });
+    }
 
-`;
+    if (user.comments.length > 0) {
+      block += `\n💬 *Комментарии:* ${user.comments.length} шт.\n`;
+      user.comments.forEach(comment => {
+        const url = `${this.jiraBaseURL}/browse/${comment.issueKey}`;
+        block += `  • <${url}|${comment.issueKey}>\n`;
+      });
+    }
+
+    if (user.tasksInProgress.length > 0) {
+      block += `\n⚙️ *Задачи в работе:*\n`;
+      user.tasksInProgress.forEach(task => {
+        const url = `${this.jiraBaseURL}/browse/${task.issueKey}`;
+        block += `  • <${url}|${task.issueKey}> — \`${task.status}\`\n`;
+      });
+    }
+
+    block += '\n';
+
+    return block;
+  }
+
+  _formatTimeInStatus(seconds) {
+    if (seconds === 0) return '';
+    
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const days = Math.floor(hours / 24);
+    
+    if (days > 0) {
+      const remainingHours = hours % 24;
+      if (remainingHours > 0) {
+        return `(${days}д ${remainingHours}ч в предыдущем статусе)`;
+      }
+      return `(${days}д в предыдущем статусе)`;
+    }
+    
+    if (hours > 0) {
+      if (minutes > 0) {
+        return `(${hours}ч ${minutes}м в предыдущем статусе)`;
+      }
+      return `(${hours}ч в предыдущем статусе)`;
+    }
+    
+    if (minutes > 0) {
+      return `(${minutes}м в предыдущем статусе)`;
+    }
+    
+    return `(${seconds}с в предыдущем статусе)`;
   }
 
   formatError(error, attempts) {
@@ -155,7 +150,7 @@ ${statusList}
 Ошибка: ${error.message}
 Попыток: ${attempts}/${attempts}
 
-Следующая попытка: завтра в 11:00 UTC`;
+Следующая попытка: завтра в 08:00 UTC`;
   }
 }
 
