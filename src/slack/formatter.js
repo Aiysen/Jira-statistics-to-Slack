@@ -1,7 +1,7 @@
 class SlackFormatter {
   constructor(jiraBaseURL) {
     this.jiraBaseURL = jiraBaseURL;
-    this.maxMessageLength = 3000;
+    this.maxMessageLength = 35000;
   }
 
   formatReport(data) {
@@ -66,7 +66,7 @@ class SlackFormatter {
       
       if (message.length + userBlock.length > this.maxMessageLength - 100) {
         const remaining = users.length - includedUsers;
-        message += `\n... и ещё ${remaining} исполнителей`;
+        message += `\n... и ещё ${remaining} ${this._pluralize(remaining, 'исполнитель', 'исполнителя', 'исполнителей')}`;
         break;
       }
       
@@ -151,6 +151,19 @@ class SlackFormatter {
 Попыток: ${attempts}/${attempts}
 
 Следующая попытка: завтра в 08:00 UTC`;
+  }
+
+  _pluralize(count, one, few, many) {
+    const mod10 = count % 10;
+    const mod100 = count % 100;
+    
+    if (mod10 === 1 && mod100 !== 11) {
+      return one;
+    }
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 10 || mod100 >= 20)) {
+      return few;
+    }
+    return many;
   }
 }
 
