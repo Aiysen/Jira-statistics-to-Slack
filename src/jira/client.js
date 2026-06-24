@@ -136,6 +136,20 @@ class JiraClient {
     );
   }
 
+  async getIssueSummary(issueKey) {
+    logger.debug('Fetching issue summary', { issueKey });
+
+    return retry(
+      async () => {
+        const response = await this.client.get(`/rest/api/3/issue/${issueKey}`, {
+          params: { fields: 'summary' }
+        });
+        return response.data.fields?.summary || null;
+      },
+      { context: { endpoint: `/rest/api/3/issue/${issueKey}` } }
+    );
+  }
+
   async getIssueChangelog(issueKey) {
     logger.debug('Fetching changelog', { issueKey });
 

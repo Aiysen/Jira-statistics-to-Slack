@@ -3,6 +3,7 @@ const ReportGenerator = require('./report');
 const HealthServer = require('./health');
 const GitLabClient = require('./gitlab/client');
 const SlackClient = require('./slack/client');
+const JiraClient = require('./jira/client');
 const WebhookHandler = require('./deploy/webhookHandler');
 const PipelineHandler = require('./gitlab/pipelineHandler');
 const logger = require('./utils/logger');
@@ -52,8 +53,9 @@ function main() {
     if (GitLabClient.isConfigured()) {
       const gitlabClient = new GitLabClient();
       const slackClient = new SlackClient();
+      const jiraClient = new JiraClient();
       webhookHandler = new WebhookHandler(gitlabClient, slackClient);
-      pipelineHandler = new PipelineHandler(slackClient);
+      pipelineHandler = new PipelineHandler(slackClient, jiraClient);
       logger.info('GitLab integration enabled', {
         projects: require('./gitlab/config').getGitlabProjects().map(p => p.id)
       });

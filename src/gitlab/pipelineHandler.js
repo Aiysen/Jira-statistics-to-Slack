@@ -8,10 +8,12 @@ const STATUS_ICONS = {
 
 const WATCHED_BRANCHES = ['master', 'main'];
 const WATCHED_STATUSES = ['success'];
+const JIRA_KEY_REGEX = /([A-Z][A-Z0-9]+-\d+)/;
 
 class PipelineHandler {
-  constructor(slackClient) {
+  constructor(slackClient, jiraClient = null) {
     this.slackClient = slackClient;
+    this.jiraClient = jiraClient;
   }
 
   async handlePipelineEvent(payload) {
@@ -35,13 +37,32 @@ class PipelineHandler {
       pipelineId: payload.object_attributes?.id,
     });
 
-    const message = this._formatMessage(payload);
+    const commitTitle = payload.commit?.message?.split('\n')[0]?.trim() || '';
+    const issueKey = this._extractIssueKey(commitTitle);
+    const issueSummary = issueKey ? await this._fetchIssueSummary(issueKey) : null;
+
+    const message = this._formatMessage(payload, issueKey, issueSummary);
     await this.slackClient.postDeployNotification(message);
 
-    logger.info('Pipeline notification sent', { ref, status });
+    logger.info('Pipeline notification sent', { ref, status, issueKey });
   }
 
-  _formatMessage(payload) {
+  _extractIssueKey(text) {
+    const match = text.match(JIRA_KEY_REGEX);
+    return match ? match[1] : null;
+  }
+
+  async _fetchIssueSummary(issueKey) {
+    if (!this.jiraClient) return null;
+    try {
+      return await this.jiraClient.getIssueSummary(issueKey);
+    } catch (error) {
+      logger.warn('Failed to fetch Jira issue summary', { issueKey, error: error.message });
+      return null;
+    }
+  }
+
+  _formatMessage(payload, issueKey, issueSummary) {
     const { object_attributes: pipeline, project, commit, user } = payload;
 
     const icon = STATUS_ICONS[pipeline.status] || '⏳';
@@ -55,10 +76,16 @@ class PipelineHandler {
     if (duration) message += ` | ${duration}`;
     message += '\n';
 
-    if (commit) {
-      const commitText = commit.message?.split('\n')[0]?.trim() || commit.id.slice(0, 8);
+    if (issueKey) {
+      const jiraBaseURL = process.env.JIRA_BASE_URL || '';
+      const jiraUrl = `${jiraBaseURL}/browse/${issueKey}`;
+      const jiraLabel = issueSummary ? `${issueKey}: ${issueSummary}` : issueKey;
+      const authorName = commit?.author?.name || user?.name || 'Unknown';
+      message += `Задача: <${jiraUrl}|${jiraLabel}> (${authorName})`;
+    } else if (commit) {
+      const commitTitle = commit.message?.split('\n')[0]?.trim() || commit.id.slice(0, 8);
       const authorName = commit.author?.name || user?.name || 'Unknown';
-      const commitLink = commit.url ? `<${commit.url}|${commitText}>` : commitText;
+      const commitLink = commit.url ? `<${commit.url}|${commitTitle}>` : commitTitle;
       message += `Коммит: ${commitLink} (${authorName})`;
     }
 
