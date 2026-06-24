@@ -141,6 +141,26 @@ npm run test:coverage
 | `HEALTH_CHECK_PORT` | Порт для health check | `3000` |
 | `LOG_LEVEL` | Уровень логирования | `info` |
 
+### GitLab интеграция (опционально)
+
+Включается автоматически при наличии обеих переменных `GITLAB_BASE_URL` + `GITLAB_TOKEN`.
+
+**Что добавляет:**
+- Секция «Открытые MR» в родительском сообщении ежедневного отчёта.
+- Автоматическое создание MR при переходе тикета Jira в «Ready for Deploy» (через webhook).
+
+| Переменная | Описание | Пример |
+|------------|----------|--------|
+| `GITLAB_BASE_URL` | URL GitLab инстанса | `https://git.chcadm.in` |
+| `GITLAB_TOKEN` | Personal Access Token (scope `api`, Developer+) | `glpat-xxxxx` |
+| `JIRA_WEBHOOK_SECRET` | Секрет для проверки входящего webhook от Jira Automation | любая случайная строка |
+| `JIRA_READY_FOR_DEPLOY_STATUS` | Имя статуса Jira, по которому создаётся MR | `Ready for Deploy` |
+
+**Список репозиториев** (project id → prod-ветка) хранится только в коде: [`src/gitlab/config.js`](src/gitlab/config.js).  
+При добавлении репозитория — см. [`docs/gitlab-repositories.md`](docs/gitlab-repositories.md).
+
+**После деплоя** — следуйте [`docs/post-deploy-checklist.md`](docs/post-deploy-checklist.md).
+
 ### Примеры конфигурации
 
 #### Фильтрация по проектам

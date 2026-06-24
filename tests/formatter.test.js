@@ -157,5 +157,90 @@ describe('SlackFormatter', () => {
       expect(result).toContain('Следующая попытка: завтра в 11:00 UTC');
     });
   });
+
+  describe('_formatOpenMrsSection', () => {
+    test('returns empty string when no MRs', () => {
+      const result = formatter._formatOpenMrsSection([]);
+      expect(result).toBe('');
+    });
+
+    test('returns empty string for null/undefined', () => {
+      expect(formatter._formatOpenMrsSection(null)).toBe('');
+      expect(formatter._formatOpenMrsSection(undefined)).toBe('');
+    });
+
+    test('formats MRs with references and branches', () => {
+      const mrs = [
+        {
+          web_url: 'https://git.chcadm.in/group/repo/-/merge_requests/1',
+          iid: 1,
+          title: 'CPAYMENT-100: Add feature',
+          source_branch: 'feature/CPAYMENT-100',
+          target_branch: 'master',
+          references: { full: 'group/repo!1' }
+        }
+      ];
+
+      const result = formatter._formatOpenMrsSection(mrs);
+
+      expect(result).toContain('🔀 *Открытые MR (1):*');
+      expect(result).toContain('group/repo!1');
+      expect(result).toContain('CPAYMENT-100: Add feature');
+      expect(result).toContain('feature/CPAYMENT-100');
+      expect(result).toContain('master');
+    });
+
+    test('uses iid fallback when references missing', () => {
+      const mrs = [
+        {
+          web_url: 'https://git.example.com/mr/5',
+          iid: 5,
+          title: 'Fix bug',
+          source_branch: 'bugfix/X',
+          target_branch: 'main'
+        }
+      ];
+
+      const result = formatter._formatOpenMrsSection(mrs);
+      expect(result).toContain('!5');
+    });
+
+    test('truncates to 20 MRs with overflow message', () => {
+      const mrs = Array.from({ length: 25 }, (_, i) => ({
+        web_url: `https://git.example.com/mr/${i}`,
+        iid: i,
+        title: `MR ${i}`,
+        source_branch: `feature/X-${i}`,
+        target_branch: 'master',
+        references: { full: `group/repo!${i}` }
+      }));
+
+      const result = formatter._formatOpenMrsSection(mrs);
+
+      expect(result).toContain('Открытые MR (25)');
+      expect(result).toContain('и ещё 5 MR');
+    });
+
+    test('formatReport passes openMrs to mainMessage', () => {
+      const data = {
+        hasActivity: false,
+        summary: { processingTime: '0.5' }
+      };
+      const mrs = [
+        {
+          web_url: 'https://git.example.com/mr/1',
+          iid: 1,
+          title: 'PROJ-1: task',
+          source_branch: 'feature/PROJ-1',
+          target_branch: 'master',
+          references: { full: 'group/repo!1' }
+        }
+      ];
+
+      const result = formatter.formatReport(data, mrs);
+      expect(result.mainMessage).toContain('🔀 *Открытые MR');
+      expect(result.mainMessage).toContain('group/repo!1');
+    });
+  });
 });
 

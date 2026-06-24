@@ -4,17 +4,17 @@ class SlackFormatter {
     this.maxMessageLength = 35000;
   }
 
-  formatReport(data) {
+  formatReport(data, openMrs = []) {
     const now = new Date();
     const dateStr = this._formatDate(now);
 
     if (!data.hasActivity) {
       return {
-        mainMessage: this._formatNoActivity(dateStr, data.summary.processingTime)
+        mainMessage: this._formatNoActivity(dateStr, data.summary.processingTime, openMrs)
       };
     }
 
-    const mainMessage = this._formatMainMessage(dateStr, data.summary);
+    const mainMessage = this._formatMainMessage(dateStr, data.summary, openMrs);
     const usersMessage = this._formatUsersMessage(data.users);
 
     return {
@@ -33,24 +33,62 @@ class SlackFormatter {
     return `${day}.${month}.${year} ${hours}:${minutes}`;
   }
 
-  _formatNoActivity(dateStr, processingTime) {
-    return `📊 Отчёт активности Jira
+  _formatNoActivity(dateStr, processingTime, openMrs = []) {
+    let message = `📊 Отчёт активности Jira
 Период: последние 24 часа (до ${dateStr})
 
 ℹ️ За последние 24 часа активности не обнаружено
 
 Время обработки: ${processingTime} сек`;
+
+    const mrsSection = this._formatOpenMrsSection(openMrs);
+    if (mrsSection) {
+      message += '\n\n' + mrsSection;
+    }
+
+    return message;
   }
 
-  _formatMainMessage(dateStr, summary) {
-    return `📊 Отчёт активности Jira
+  _formatMainMessage(dateStr, summary, openMrs = []) {
+    let message = `📊 Отчёт активности Jira
 Период: последние 24 часа (до ${dateStr})
 
 👥 Активных исполнителей: ${summary.usersCount}
 💬 Комментариев: ${summary.commentsCount}
-⏱️ Время обработки: ${summary.processingTime} сек
+⏱️ Время обработки: ${summary.processingTime} сек`;
 
-Подробности по каждому исполнителю в треде 👇`;
+    const mrsSection = this._formatOpenMrsSection(openMrs);
+    if (mrsSection) {
+      message += '\n\n' + mrsSection;
+    }
+
+    message += '\n\nПодробности по каждому исполнителю в треде 👇';
+    return message;
+  }
+
+  _formatOpenMrsSection(openMrs) {
+    if (!openMrs || openMrs.length === 0) return '';
+
+    const MAX_DISPLAY = 20;
+    const displayed = openMrs.slice(0, MAX_DISPLAY);
+    const remaining = openMrs.length - displayed.length;
+
+    let section = `🔀 *Открытые MR (${openMrs.length}):*\n`;
+
+    for (const mr of displayed) {
+      const ref = mr.references?.full || `!${mr.iid}`;
+      let line = `  • <${mr.web_url}|${ref}> — ${mr.title}`;
+      if (mr.source_branch && mr.target_branch) {
+        line += ` (\`${mr.source_branch}\` → \`${mr.target_branch}\`)`;
+      }
+      section += line + '\n';
+    }
+
+    if (remaining > 0) {
+      section += `  … и ещё ${remaining} MR\n`;
+    }
+
+    return section.trimEnd();
   }
 
   _formatUsersMessage(users) {

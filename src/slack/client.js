@@ -67,6 +67,25 @@ class SlackClient {
     );
   }
 
+  async postDeployNotification(message) {
+    logger.info('Posting deploy notification to Slack');
+
+    return retry(
+      async () => {
+        const result = await this.client.chat.postMessage({
+          channel: this.channelId,
+          text: message,
+          unfurl_links: false,
+          unfurl_media: false
+        });
+
+        logger.info('Deploy notification posted', { ts: result.ts });
+        return result;
+      },
+      { context: { action: 'post_deploy_notification' } }
+    );
+  }
+
   async _postThreadMessage(threadTs, text) {
     return await this.client.chat.postMessage({
       channel: this.channelId,

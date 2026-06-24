@@ -2,6 +2,7 @@ const JiraClient = require('./jira/client');
 const JiraAggregator = require('./jira/aggregator');
 const SlackClient = require('./slack/client');
 const SlackFormatter = require('./slack/formatter');
+const GitLabClient = require('./gitlab/client');
 const logger = require('./utils/logger');
 const dedup = require('./utils/dedup');
 
@@ -11,6 +12,7 @@ class ReportGenerator {
     this.jiraAggregator = new JiraAggregator(this.jiraClient);
     this.slackClient = new SlackClient();
     this.slackFormatter = new SlackFormatter(this.jiraClient.baseURL);
+    this.gitlabClient = GitLabClient.isConfigured() ? new GitLabClient() : null;
   }
 
   async generate() {
@@ -22,9 +24,17 @@ class ReportGenerator {
     }
 
     try {
-      const data = await this.jiraAggregator.aggregateData();
-      
-      const formattedReport = this.slackFormatter.formatReport(data);
+      const [data, openMrs] = await Promise.all([
+        this.jiraAggregator.aggregateData(),
+        this.gitlabClient
+          ? this.gitlabClient.listOpenMergeRequests().catch(err => {
+              logger.warn('Failed to fetch open MRs for report', { error: err.message });
+              return [];
+            })
+          : Promise.resolve([])
+      ]);
+
+      const formattedReport = this.slackFormatter.formatReport(data, openMrs);
       
       await this.slackClient.postReport(formattedReport);
       

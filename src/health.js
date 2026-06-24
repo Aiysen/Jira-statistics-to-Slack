@@ -3,16 +3,19 @@ const logger = require('./utils/logger');
 const dedup = require('./utils/dedup');
 
 class HealthServer {
-  constructor() {
+  constructor(webhookHandler = null) {
     this.port = parseInt(process.env.PORT || process.env.HEALTH_CHECK_PORT) || 3000;
     this.startTime = Date.now();
     this.server = null;
+    this.webhookHandler = webhookHandler;
   }
 
   start() {
     this.server = http.createServer((req, res) => {
       if (req.method === 'GET' && req.url === '/health') {
         this._handleHealthCheck(req, res);
+      } else if (req.method === 'POST' && req.url === '/webhooks/jira/deploy-ready') {
+        this._handleDeployWebhook(req, res);
       } else {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Not found' }));
@@ -88,6 +91,60 @@ class HealthServer {
     }
 
     return next;
+  }
+
+  _handleDeployWebhook(req, res) {
+    if (!this.webhookHandler) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'GitLab not configured' }));
+      return;
+    }
+
+    const expectedSecret = process.env.JIRA_WEBHOOK_SECRET;
+    if (expectedSecret && req.headers['x-webhook-secret'] !== expectedSecret) {
+      logger.warn('Deploy webhook: invalid secret');
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unauthorized' }));
+      return;
+    }
+
+    let body = '';
+
+    req.on('error', (err) => {
+      logger.error('Deploy webhook request error', { error: err.message });
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Request error' }));
+    });
+
+    req.on('data', (chunk) => { body += chunk; });
+
+    req.on('end', () => {
+      let payload;
+      try {
+        payload = JSON.parse(body);
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid JSON' }));
+        return;
+      }
+
+      const { issueKey, issueId, summary } = payload;
+
+      if (!issueKey) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Missing issueKey' }));
+        return;
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, issueKey }));
+
+      this.webhookHandler.handleDeployReady(issueKey, issueId, summary || issueKey)
+        .catch(err => logger.error('Deploy webhook handler failed', {
+          issueKey,
+          error: err.message
+        }));
+    });
   }
 }
 
