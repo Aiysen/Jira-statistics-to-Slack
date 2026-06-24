@@ -7,6 +7,7 @@ const STATUS_ICONS = {
 };
 
 const WATCHED_BRANCHES = ['master', 'main'];
+const WATCHED_STATUSES = ['success'];
 
 class PipelineHandler {
   constructor(slackClient) {
@@ -19,6 +20,11 @@ class PipelineHandler {
 
     if (!WATCHED_BRANCHES.includes(ref)) {
       logger.debug('Pipeline event ignored: not a watched branch', { ref, status });
+      return;
+    }
+
+    if (!WATCHED_STATUSES.includes(status)) {
+      logger.debug('Pipeline event ignored: not a watched status', { ref, status });
       return;
     }
 
@@ -40,7 +46,8 @@ class PipelineHandler {
 
     const icon = STATUS_ICONS[pipeline.status] || '⏳';
     const projectLink = `<${project.web_url}|${project.name}>`;
-    const pipelineLink = `<${pipeline.web_url}|#${pipeline.id}>`;
+    const pipelineUrl = pipeline.url || pipeline.web_url;
+    const pipelineLink = pipelineUrl ? `<${pipelineUrl}|#${pipeline.id}>` : `#${pipeline.id}`;
     const duration = pipeline.duration ? this._formatDuration(pipeline.duration) : null;
 
     let message = `${icon} Pipeline ${pipelineLink} — ${projectLink}\n`;
