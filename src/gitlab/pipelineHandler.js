@@ -4,10 +4,11 @@ const STATUS_ICONS = {
   success: '✅',
   failed: '❌',
   canceled: '🚫',
+  manual: '▶️',
 };
 
 const WATCHED_BRANCHES = ['master', 'main'];
-const WATCHED_STATUSES = ['success'];
+const WATCHED_STATUSES = ['success', 'manual'];
 const JIRA_KEY_REGEX = /([A-Z][A-Z0-9]+-\d+)/;
 
 class PipelineHandler {
@@ -75,6 +76,10 @@ class PipelineHandler {
     message += `Ветка: \`${pipeline.ref}\` | Статус: ${pipeline.status}`;
     if (duration) message += ` | ${duration}`;
     message += '\n';
+
+    if (pipeline.status === 'manual') {
+      message += `*Требуется ручной деплой в prod* — нажмите Play в pipeline\n`;
+    }
 
     if (issueKey) {
       const jiraBaseURL = process.env.JIRA_BASE_URL || '';
