@@ -4,6 +4,7 @@ const HealthServer = require('./health');
 const GitLabClient = require('./gitlab/client');
 const SlackClient = require('./slack/client');
 const WebhookHandler = require('./deploy/webhookHandler');
+const PipelineHandler = require('./gitlab/pipelineHandler');
 const logger = require('./utils/logger');
 
 function validateConfig() {
@@ -47,10 +48,12 @@ function main() {
     logger.info('Configuration validated successfully');
 
     let webhookHandler = null;
+    let pipelineHandler = null;
     if (GitLabClient.isConfigured()) {
       const gitlabClient = new GitLabClient();
       const slackClient = new SlackClient();
       webhookHandler = new WebhookHandler(gitlabClient, slackClient);
+      pipelineHandler = new PipelineHandler(slackClient);
       logger.info('GitLab integration enabled', {
         projects: require('./gitlab/config').getGitlabProjects().map(p => p.id)
       });
@@ -58,7 +61,7 @@ function main() {
       logger.info('GitLab integration disabled (GITLAB_BASE_URL or GITLAB_TOKEN not set)');
     }
 
-    const healthServer = new HealthServer(webhookHandler);
+    const healthServer = new HealthServer(webhookHandler, pipelineHandler);
     healthServer.start();
 
     const cronSchedule = process.env.CRON_SCHEDULE || '0 11 * * *';
