@@ -100,9 +100,10 @@ class WebhookHandler {
     let message = `🚀 *Ready for Deploy* — ${issueKey}: ${summary}\n`;
     message += `Jira: <${jiraUrl}|${issueKey}>\n`;
 
-    if (results.length > 0) {
+    const relevant = results.filter(r => r.status !== 'no_branch');
+    if (relevant.length > 0) {
       message += '\n';
-      for (const result of results) {
+      for (const result of relevant) {
         message += this._formatProjectResult(result) + '\n';
       }
     }
