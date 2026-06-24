@@ -112,6 +112,29 @@ class GitLabClient {
       { context: { projectId, sourceBranch, targetBranch, action: 'create_mr' } }
     );
   }
+
+  async getMergeRequest(projectId, mrIid) {
+    return retry(
+      async () => {
+        const response = await this.client.get(`/api/v4/projects/${projectId}/merge_requests/${mrIid}`);
+        return response.data;
+      },
+      { context: { projectId, mrIid, action: 'get_mr' } }
+    );
+  }
+
+  async createMergeRequestNote(projectId, mrIid, body) {
+    return retry(
+      async () => {
+        const response = await this.client.post(
+          `/api/v4/projects/${projectId}/merge_requests/${mrIid}/notes`,
+          { body }
+        );
+        return response.data;
+      },
+      { context: { projectId, mrIid, action: 'create_mr_note' } }
+    );
+  }
 }
 
 module.exports = GitLabClient;

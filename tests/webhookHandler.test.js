@@ -8,8 +8,16 @@ function makeGitlabClient(overrides = {}) {
     createMergeRequest: jest.fn().mockResolvedValue({
       web_url: 'https://git.chcadm.in/group/repo/-/merge_requests/1',
       iid: 1,
-      references: { full: 'group/repo!1' }
+      references: { full: 'group/repo!1' },
+      has_conflicts: false,
+      merge_status: 'can_be_merged'
     }),
+    getMergeRequest: jest.fn().mockResolvedValue({
+      iid: 1,
+      has_conflicts: false,
+      merge_status: 'can_be_merged'
+    }),
+    createMergeRequestNote: jest.fn().mockResolvedValue({ id: 100 }),
     ...overrides
   };
 }
@@ -61,7 +69,9 @@ describe('WebhookHandler._processProject', () => {
       getExistingMergeRequest: jest.fn().mockResolvedValue({
         web_url: 'https://git.chcadm.in/group/repo/-/merge_requests/5',
         iid: 5,
-        references: { full: 'group/repo!5' }
+        references: { full: 'group/repo!5' },
+        has_conflicts: false,
+        merge_status: 'can_be_merged'
       })
     });
     const handler = new WebhookHandler(gitlab, makeSlackClient());
@@ -70,7 +80,9 @@ describe('WebhookHandler._processProject', () => {
 
     expect(result.status).toBe('existing');
     expect(result.mrRef).toBe('group/repo!5');
+    expect(result.hasConflict).toBe(false);
     expect(gitlab.createMergeRequest).not.toHaveBeenCalled();
+    expect(gitlab.createMergeRequestNote).not.toHaveBeenCalled();
   });
 
   test('empty_diff: does not create MR when diff is empty', async () => {
@@ -100,13 +112,114 @@ describe('WebhookHandler._processProject', () => {
 
     expect(result.status).toBe('created');
     expect(result.mrRef).toBe('group/repo!1');
+    expect(result.hasConflict).toBe(false);
     expect(gitlab.createMergeRequest).toHaveBeenCalledWith(
       51,
       'feature/CPAYMENT-1000',
       'master',
       'CPAYMENT-1000: Test task'
     );
+    expect(gitlab.createMergeRequestNote).not.toHaveBeenCalled();
   });
+
+  test('created with conflict: posts note and sets hasConflict=true', async () => {
+    const gitlab = makeGitlabClient({
+      searchBranchesByIssueKey: jest.fn().mockResolvedValue([
+        { name: 'feature/CPAYMENT-1000' }
+      ]),
+      createMergeRequest: jest.fn().mockResolvedValue({
+        web_url: 'https://git.chcadm.in/group/repo/-/merge_requests/1',
+        iid: 1,
+        references: { full: 'group/repo!1' },
+        has_conflicts: true,
+        merge_status: 'cannot_be_merged'
+      })
+    });
+    const handler = new WebhookHandler(gitlab, makeSlackClient());
+
+    const result = await handler._processProject(issueKey, summary, project);
+
+    expect(result.status).toBe('created');
+    expect(result.hasConflict).toBe(true);
+    expect(result.targetBranch).toBe('master');
+    expect(gitlab.createMergeRequestNote).toHaveBeenCalledTimes(1);
+    const noteBody = gitlab.createMergeRequestNote.mock.calls[0][2];
+    expect(noteBody).toContain('[jira-deploy-bot:conflict]');
+    expect(noteBody).toContain('master');
+    expect(noteBody).toContain('@jbogomolov');
+  });
+
+  test('existing with conflict: posts note and sets hasConflict=true', async () => {
+    const gitlab = makeGitlabClient({
+      searchBranchesByIssueKey: jest.fn().mockResolvedValue([
+        { name: 'feature/CPAYMENT-1000' }
+      ]),
+      getExistingMergeRequest: jest.fn().mockResolvedValue({
+        web_url: 'https://git.chcadm.in/group/repo/-/merge_requests/5',
+        iid: 5,
+        references: { full: 'group/repo!5' },
+        has_conflicts: true,
+        merge_status: 'cannot_be_merged'
+      })
+    });
+    const handler = new WebhookHandler(gitlab, makeSlackClient());
+
+    const result = await handler._processProject(issueKey, summary, project);
+
+    expect(result.status).toBe('existing');
+    expect(result.hasConflict).toBe(true);
+    expect(gitlab.createMergeRequestNote).toHaveBeenCalledTimes(1);
+    const noteBody = gitlab.createMergeRequestNote.mock.calls[0][2];
+    expect(noteBody).toContain('@jbogomolov');
+  });
+
+  test('conflict note dedup: does not post second note for same MR', async () => {
+    const gitlab = makeGitlabClient({
+      searchBranchesByIssueKey: jest.fn().mockResolvedValue([
+        { name: 'feature/CPAYMENT-1000' }
+      ]),
+      getExistingMergeRequest: jest.fn().mockResolvedValue({
+        web_url: 'https://git.chcadm.in/group/repo/-/merge_requests/5',
+        iid: 5,
+        references: { full: 'group/repo!5' },
+        has_conflicts: true,
+        merge_status: 'cannot_be_merged'
+      })
+    });
+    const handler = new WebhookHandler(gitlab, makeSlackClient());
+
+    await handler._processProject(issueKey, summary, project);
+    await handler._processProject(issueKey, summary, project);
+
+    expect(gitlab.createMergeRequestNote).toHaveBeenCalledTimes(1);
+  });
+
+  test('merge_status checking: re-fetches MR before deciding on conflict', async () => {
+    const gitlab = makeGitlabClient({
+      searchBranchesByIssueKey: jest.fn().mockResolvedValue([
+        { name: 'feature/CPAYMENT-1000' }
+      ]),
+      createMergeRequest: jest.fn().mockResolvedValue({
+        web_url: 'https://git.chcadm.in/group/repo/-/merge_requests/1',
+        iid: 1,
+        references: { full: 'group/repo!1' },
+        has_conflicts: false,
+        merge_status: 'checking'
+      }),
+      getMergeRequest: jest.fn().mockResolvedValue({
+        iid: 1,
+        has_conflicts: true,
+        merge_status: 'cannot_be_merged'
+      })
+    });
+    const handler = new WebhookHandler(gitlab, makeSlackClient());
+
+    const result = await handler._processProject(issueKey, summary, project);
+
+    expect(result.hasConflict).toBe(true);
+    expect(gitlab.getMergeRequest).toHaveBeenCalledWith(51, 1);
+    expect(gitlab.createMergeRequestNote).toHaveBeenCalledTimes(1);
+  }, 10000);
 
   test('error: returns error status on API failure', async () => {
     const gitlab = makeGitlabClient({
@@ -152,15 +265,47 @@ describe('WebhookHandler dedup', () => {
 describe('WebhookHandler._formatProjectResult', () => {
   const handler = new WebhookHandler(makeGitlabClient(), makeSlackClient());
 
-  test('created', () => {
+  test('created without conflict', () => {
     const result = handler._formatProjectResult({
       projectId: 51,
       status: 'created',
       mrUrl: 'https://git.chcadm.in/group/repo/-/merge_requests/1',
-      mrRef: 'group/repo!1'
+      mrRef: 'group/repo!1',
+      hasConflict: false
     });
     expect(result).toContain('создан');
     expect(result).toContain('group/repo!1');
+    expect(result).not.toContain('конфликт');
+  });
+
+  test('created with conflict: shows conflict warning and mention', () => {
+    const result = handler._formatProjectResult({
+      projectId: 51,
+      status: 'created',
+      mrUrl: 'https://git.chcadm.in/group/repo/-/merge_requests/1',
+      mrRef: 'group/repo!1',
+      hasConflict: true,
+      targetBranch: 'master'
+    });
+    expect(result).toContain('создан');
+    expect(result).toContain('конфликт');
+    expect(result).toContain('master');
+    expect(result).toContain('@Jegor Bogomolov');
+  });
+
+  test('existing with conflict: shows conflict warning and mention', () => {
+    const result = handler._formatProjectResult({
+      projectId: 51,
+      status: 'existing',
+      mrUrl: 'https://git.chcadm.in/group/repo/-/merge_requests/5',
+      mrRef: 'group/repo!5',
+      hasConflict: true,
+      targetBranch: 'main'
+    });
+    expect(result).toContain('уже существует');
+    expect(result).toContain('конфликт');
+    expect(result).toContain('main');
+    expect(result).toContain('@Jegor Bogomolov');
   });
 
   test('no_branch', () => {

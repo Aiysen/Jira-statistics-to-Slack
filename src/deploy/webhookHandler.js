@@ -2,6 +2,9 @@ const logger = require('../utils/logger');
 const { getGitlabProjects } = require('../gitlab/config');
 
 const DEDUP_WINDOW_MS = 60 * 60 * 1000;
+const MR_CONFLICT_NOTE_MARKER = '[jira-deploy-bot:conflict]';
+// После создания MR GitLab может ещё вычислять merge_status; ждём и делаем один повторный запрос
+const MERGE_STATUS_CHECK_DELAY_MS = 2000;
 
 class WebhookHandler {
   constructor(gitlabClient, slackClient, jiraBaseURL) {
@@ -9,6 +12,8 @@ class WebhookHandler {
     this.slackClient = slackClient;
     this.jiraBaseURL = jiraBaseURL || process.env.JIRA_BASE_URL || '';
     this.recentIssues = new Map();
+    // in-memory дедупликация conflict-note: Set из "projectId:mrIid"
+    this.notifiedConflicts = new Set();
   }
 
   async handleDeployReady(issueKey, issueId, summary) {
@@ -30,7 +35,7 @@ class WebhookHandler {
 
     logger.info('Deploy-ready handled', {
       issueKey,
-      results: results.map(r => ({ projectId: r.projectId, status: r.status }))
+      results: results.map(r => ({ projectId: r.projectId, status: r.status, hasConflict: r.hasConflict }))
     });
   }
 
@@ -58,11 +63,14 @@ class WebhookHandler {
         projectId, sourceBranch, targetBranch
       );
       if (existing) {
+        const hasConflict = await this._checkAndHandleConflict(projectId, existing, targetBranch);
         return {
           projectId,
           status: 'existing',
           mrUrl: existing.web_url,
-          mrRef: existing.references?.full || `!${existing.iid}`
+          mrRef: existing.references?.full || `!${existing.iid}`,
+          hasConflict,
+          targetBranch
         };
       }
 
@@ -78,11 +86,14 @@ class WebhookHandler {
         `${issueKey}: ${summary}`
       );
 
+      const hasConflict = await this._checkAndHandleConflict(projectId, mr, targetBranch);
       return {
         projectId,
         status: 'created',
         mrUrl: mr.web_url,
-        mrRef: mr.references?.full || `!${mr.iid}`
+        mrRef: mr.references?.full || `!${mr.iid}`,
+        hasConflict,
+        targetBranch
       };
 
     } catch (error) {
@@ -93,6 +104,52 @@ class WebhookHandler {
       });
       return { projectId, status: 'error', errorMessage: error.message };
     }
+  }
+
+  async _checkAndHandleConflict(projectId, mr, targetBranch) {
+    try {
+      const hasConflict = await this._getMrHasConflict(projectId, mr);
+      if (hasConflict) {
+        await this._postConflictNote(projectId, mr.iid, targetBranch);
+      }
+      return hasConflict;
+    } catch (error) {
+      logger.warn('Failed to check or handle MR conflict', {
+        projectId,
+        mrIid: mr.iid,
+        error: error.message
+      });
+      return false;
+    }
+  }
+
+  async _getMrHasConflict(projectId, mr) {
+    let data = mr;
+    if (data.merge_status === 'checking') {
+      await new Promise(resolve => setTimeout(resolve, MERGE_STATUS_CHECK_DELAY_MS));
+      data = await this.gitlabClient.getMergeRequest(projectId, mr.iid);
+    }
+    return data.has_conflicts === true;
+  }
+
+  async _postConflictNote(projectId, mrIid, targetBranch) {
+    const key = `${projectId}:${mrIid}`;
+    if (this.notifiedConflicts.has(key)) {
+      logger.debug('Conflict note already posted, skipping', { projectId, mrIid });
+      return;
+    }
+
+    const gitlabMention = process.env.GITLAB_MENTION_ON_MR_CONFLICT || 'jbogomolov';
+    const body = [
+      `${MR_CONFLICT_NOTE_MARKER} ⚠️ При автосоздании MR (Ready for Deploy) обнаружен конфликт слияния с веткой \`${targetBranch}\`.`,
+      'Необходимо разрешить конфликт вручную.',
+      '',
+      `@${gitlabMention}`
+    ].join('\n');
+
+    await this.gitlabClient.createMergeRequestNote(projectId, mrIid, body);
+    this.notifiedConflicts.add(key);
+    logger.info('Conflict note posted to MR', { projectId, mrIid });
   }
 
   _formatSlackMessage(issueKey, summary, results) {
@@ -113,12 +170,13 @@ class WebhookHandler {
 
   _formatProjectResult(result) {
     const prefix = `• Project ${result.projectId}:`;
+    const conflictSuffix = this._formatConflictSuffix(result);
 
     switch (result.status) {
       case 'created':
-        return `${prefix} <${result.mrUrl}|${result.mrRef}> — создан`;
+        return `${prefix} <${result.mrUrl}|${result.mrRef}> — создан${conflictSuffix}`;
       case 'existing':
-        return `${prefix} <${result.mrUrl}|${result.mrRef}> — уже существует`;
+        return `${prefix} <${result.mrUrl}|${result.mrRef}> — уже существует${conflictSuffix}`;
       case 'no_branch':
         return `${prefix} ветка не найдена`;
       case 'multiple_branches': {
@@ -132,6 +190,12 @@ class WebhookHandler {
       default:
         return `${prefix} неизвестный результат`;
     }
+  }
+
+  _formatConflictSuffix(result) {
+    if (!result.hasConflict) return '';
+    const mention = process.env.SLACK_MENTION_DEPLOY_CONFLICT || '@Jegor Bogomolov';
+    return ` — ⚠️ *конфликт с \`${result.targetBranch}\`*, нужно разрешить ${mention}`;
   }
 
   _isDuplicate(issueKey) {
