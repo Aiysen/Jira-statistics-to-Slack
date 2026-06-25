@@ -43,9 +43,10 @@ class PipelineHandler {
     const issueSummary = issueKey ? await this._fetchIssueSummary(issueKey) : null;
 
     const message = this._formatMessage(payload, issueKey, issueSummary);
-    await this.slackClient.postDeployNotification(message);
+    const threadTs = issueKey ? this.slackClient.getDeployThreadTs(issueKey) : null;
+    await this.slackClient.postDeployNotification(message, { threadTs });
 
-    logger.info('Pipeline notification sent', { ref, status, issueKey });
+    logger.info('Pipeline notification sent', { ref, status, issueKey, threaded: Boolean(threadTs) });
   }
 
   _extractIssueKey(text) {

@@ -31,7 +31,8 @@ class WebhookHandler {
     );
 
     const message = this._formatSlackMessage(issueKey, summary, results);
-    await this.slackClient.postDeployNotification(message);
+    const slackResult = await this.slackClient.postDeployNotification(message);
+    this.slackClient.rememberDeployThread(issueKey, slackResult?.ts);
 
     logger.info('Deploy-ready handled', {
       issueKey,

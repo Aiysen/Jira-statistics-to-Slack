@@ -24,7 +24,8 @@ function makeGitlabClient(overrides = {}) {
 
 function makeSlackClient() {
   return {
-    postDeployNotification: jest.fn().mockResolvedValue({})
+    postDeployNotification: jest.fn().mockResolvedValue({ ts: '1700000000.000100' }),
+    rememberDeployThread: jest.fn()
   };
 }
 
@@ -246,6 +247,7 @@ describe('WebhookHandler dedup', () => {
     await handler.handleDeployReady('CPAYMENT-100', null, 'Task');
 
     expect(slack.postDeployNotification).toHaveBeenCalledTimes(1);
+    expect(slack.rememberDeployThread).toHaveBeenCalledTimes(1);
   });
 
   test('allows different issue keys', async () => {
@@ -259,6 +261,18 @@ describe('WebhookHandler dedup', () => {
     await handler.handleDeployReady('CPAYMENT-101', null, 'Task B');
 
     expect(slack.postDeployNotification).toHaveBeenCalledTimes(2);
+  });
+
+  test('stores Slack thread timestamp for deploy-ready issue', async () => {
+    const gitlab = makeGitlabClient({
+      searchBranchesByIssueKey: jest.fn().mockResolvedValue([])
+    });
+    const slack = makeSlackClient();
+    const handler = new WebhookHandler(gitlab, slack);
+
+    await handler.handleDeployReady('CPAYMENT-100', null, 'Task');
+
+    expect(slack.rememberDeployThread).toHaveBeenCalledWith('CPAYMENT-100', '1700000000.000100');
   });
 });
 

@@ -2,6 +2,8 @@ const { WebClient } = require('@slack/web-api');
 const logger = require('../utils/logger');
 const { retry } = require('../utils/retry');
 
+const DEPLOY_THREAD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 class SlackClient {
   constructor() {
     this.token = process.env.SLACK_BOT_TOKEN;
@@ -12,6 +14,7 @@ class SlackClient {
     }
 
     this.client = new WebClient(this.token);
+    this.deployThreads = new Map();
   }
 
   async postReport(formattedReport) {
@@ -67,23 +70,49 @@ class SlackClient {
     );
   }
 
-  async postDeployNotification(message) {
-    logger.info('Posting deploy notification to Slack');
+  async postDeployNotification(message, options = {}) {
+    const { threadTs } = options;
+    logger.info('Posting deploy notification to Slack', { threadTs });
 
     return retry(
       async () => {
-        const result = await this.client.chat.postMessage({
+        const params = {
           channel: this.channelId,
           text: message,
           unfurl_links: false,
           unfurl_media: false
-        });
+        };
+        if (threadTs) {
+          params.thread_ts = threadTs;
+        }
+
+        const result = await this.client.chat.postMessage(params);
 
         logger.info('Deploy notification posted', { ts: result.ts });
         return result;
       },
       { context: { action: 'post_deploy_notification' } }
     );
+  }
+
+  rememberDeployThread(issueKey, threadTs) {
+    this._cleanupDeployThreads();
+    if (!issueKey || !threadTs) return;
+    this.deployThreads.set(issueKey, { threadTs, createdAt: Date.now() });
+  }
+
+  getDeployThreadTs(issueKey) {
+    this._cleanupDeployThreads();
+    return this.deployThreads.get(issueKey)?.threadTs || null;
+  }
+
+  _cleanupDeployThreads() {
+    const now = Date.now();
+    for (const [issueKey, item] of this.deployThreads.entries()) {
+      if (now - item.createdAt > DEPLOY_THREAD_TTL_MS) {
+        this.deployThreads.delete(issueKey);
+      }
+    }
   }
 
   async _postThreadMessage(threadTs, text) {
