@@ -22,20 +22,36 @@
 
 ## Нужные webhooks на каждый проект
 
-| URL                                                                                              | Event                  | Secret token                 |
+| URL                                                                                              | Event                  | Secret token в GitLab        |
 |--------------------------------------------------------------------------------------------------|------------------------|------------------------------|
-| `https://jira-to-slack-bot-production.up.railway.app/webhooks/gitlab/pipeline`                  | Pipeline events        | `GITLAB_PIPELINE_WEBHOOK_TOKEN` (если задан) |
-| `https://jira-to-slack-bot-production.up.railway.app/webhooks/gitlab/merge-request`             | Merge request events   | `GITLAB_MR_WEBHOOK_TOKEN` или `GITLAB_PIPELINE_WEBHOOK_TOKEN` |
+| `https://jira-to-slack-bot-production.up.railway.app/webhooks/gitlab/pipeline`                  | Pipeline events        | см. ниже                     |
+| `https://jira-to-slack-bot-production.up.railway.app/webhooks/gitlab/merge-request`             | Merge request events   | см. ниже                     |
 
-> Если ни одна из переменных не задана в Railway — бот принимает запросы без проверки токена.  
-> Чтобы проверить: `railway variables | grep WEBHOOK_TOKEN`
+### Secret token — совпадение с Railway
+
+В Railway задана переменная **`GITLAB_PIPELINE_WEBHOOK_TOKEN`**. Бот сравнивает её с заголовком `X-Gitlab-Token`, который GitLab отправляет из поля **Secret token** webhook.
+
+**В каждом GitLab webhook (pipeline и merge-request) в поле Secret token нужно вставить то же значение, что в Railway `GITLAB_PIPELINE_WEBHOOK_TOKEN`.** Иначе GitLab получит **401 Unauthorized**, события не обработаются, уведомления в Slack не придут.
+
+- Pipeline webhook: только `GITLAB_PIPELINE_WEBHOOK_TOKEN`.
+- Merge request webhook: `GITLAB_MR_WEBHOOK_TOKEN`, если задан в Railway; иначе снова **`GITLAB_PIPELINE_WEBHOOK_TOKEN`**.
+
+Проверка в GitLab: Settings → Webhooks → Recent events — ответ **200** и `{"ok":true}`. **401** почти всегда значит, что Secret token в GitLab не совпадает с Railway (или пустой).
+
+> Если **ни одна** из переменных webhook-token не задана в Railway, бот принимает запросы без проверки. На production обычно токен задан — Secret в GitLab обязателен.  
+> Посмотреть переменные: `railway variables | grep WEBHOOK_TOKEN`
 
 ## Действия агента
 
-### Шаг 1 — получить GITLAB_TOKEN
+### Шаг 1 — получить GITLAB_TOKEN и webhook secret
 
 ```powershell
-$glToken = (railway variables --json | ConvertFrom-Json).GITLAB_TOKEN
+$vars = railway variables --json | ConvertFrom-Json
+$glToken = $vars.GITLAB_TOKEN
+$webhookToken = $vars.GITLAB_PIPELINE_WEBHOOK_TOKEN
+if (-not $webhookToken) {
+  Write-Warning "GITLAB_PIPELINE_WEBHOOK_TOKEN не задан — Secret token в GitLab можно не указывать"
+}
 ```
 
 ### Шаг 2 — проверить текущие webhooks
@@ -59,22 +75,37 @@ foreach ($id in @(51, 52, 81, 22, 32, 136)) {
 
 ### Шаг 3 — создать недостающие webhooks
 
+Сначала выполните Шаг 1 (`$glToken`, `$webhookToken`, `$vars`).
+
 ```powershell
 $base    = "https://git.chcadm.in/api/v4/projects"
 $botUrl  = "https://jira-to-slack-bot-production.up.railway.app"
 $headers = @{"PRIVATE-TOKEN" = $glToken; "Content-Type" = "application/json"}
 
-# MR webhook
+# MR webhook (token = GITLAB_MR_WEBHOOK_TOKEN или GITLAB_PIPELINE_WEBHOOK_TOKEN)
+$mrWebhookToken = $vars.GITLAB_MR_WEBHOOK_TOKEN
+if (-not $mrWebhookToken) { $mrWebhookToken = $webhookToken }
+
 foreach ($id in @(51, 52, 81, 22, 32, 136)) {
-  $body = @{ url = "$botUrl/webhooks/gitlab/merge-request"; merge_requests_events = $true; push_events = $false } | ConvertTo-Json
-  $resp = Invoke-RestMethod -Method Post -Uri "$base/$id/hooks" -Headers $headers -Body $body
+  $body = @{
+    url = "$botUrl/webhooks/gitlab/merge-request"
+    merge_requests_events = $true
+    push_events = $false
+  }
+  if ($mrWebhookToken) { $body.token = $mrWebhookToken }
+  $resp = Invoke-RestMethod -Method Post -Uri "$base/$id/hooks" -Headers $headers -Body ($body | ConvertTo-Json)
   Write-Host "MR webhook project ${id} -> id=$($resp.id) OK"
 }
 
 # Pipeline webhook
 foreach ($id in @(51, 52, 81, 22, 32, 136)) {
-  $body = @{ url = "$botUrl/webhooks/gitlab/pipeline"; pipeline_events = $true; push_events = $false } | ConvertTo-Json
-  $resp = Invoke-RestMethod -Method Post -Uri "$base/$id/hooks" -Headers $headers -Body $body
+  $body = @{
+    url = "$botUrl/webhooks/gitlab/pipeline"
+    pipeline_events = $true
+    push_events = $false
+  }
+  if ($webhookToken) { $body.token = $webhookToken }
+  $resp = Invoke-RestMethod -Method Post -Uri "$base/$id/hooks" -Headers $headers -Body ($body | ConvertTo-Json)
   Write-Host "Pipeline webhook project ${id} -> id=$($resp.id) OK"
 }
 ```
