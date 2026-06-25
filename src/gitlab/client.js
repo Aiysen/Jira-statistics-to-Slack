@@ -28,6 +28,16 @@ class GitLabClient {
     return !!(process.env.GITLAB_BASE_URL && process.env.GITLAB_TOKEN);
   }
 
+  async getProject(projectId) {
+    return retry(
+      async () => {
+        const response = await this.client.get(`/api/v4/projects/${projectId}`);
+        return response.data;
+      },
+      { context: { projectId, action: 'get_project' } }
+    );
+  }
+
   async listOpenMergeRequests() {
     const projects = getGitlabProjects();
     const allMrs = [];

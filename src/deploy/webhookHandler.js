@@ -43,29 +43,31 @@ class WebhookHandler {
   }
 
   async _processProject(issueKey, summary, project) {
-    const { id: projectId, targetBranch } = project;
+    const { id: projectId } = project;
+    const projectInfo = await this._getProjectInfo(project);
 
     try {
       const branches = await this.gitlabClient.searchBranchesByIssueKey(projectId, issueKey);
 
       if (branches.length === 0) {
-        return { projectId, status: 'no_branch' };
+        return { projectId, ...projectInfo, status: 'no_branch' };
       }
 
       if (branches.length > 1) {
         const mrs = await Promise.all(
-          branches.map(branch => this._processBranch(issueKey, summary, project, branch.name))
+          branches.map(branch => this._processBranch(issueKey, summary, project, branch.name, projectInfo))
         );
 
         return {
           projectId,
+          ...projectInfo,
           status: 'multiple_mrs',
           branches: branches.map(b => b.name),
           mrs
         };
       }
 
-      return await this._processBranch(issueKey, summary, project, branches[0].name);
+      return await this._processBranch(issueKey, summary, project, branches[0].name, projectInfo);
 
     } catch (error) {
       logger.error('Failed to process project for deploy-ready', {
@@ -73,11 +75,11 @@ class WebhookHandler {
         issueKey,
         error: error.message
       });
-      return { projectId, status: 'error', errorMessage: error.message };
+      return { projectId, ...projectInfo, status: 'error', errorMessage: error.message };
     }
   }
 
-  async _processBranch(issueKey, summary, project, sourceBranch) {
+  async _processBranch(issueKey, summary, project, sourceBranch, projectInfo = {}) {
     const { id: projectId, targetBranch } = project;
 
     try {
@@ -88,6 +90,7 @@ class WebhookHandler {
         const hasConflict = await this._checkAndHandleConflict(projectId, existing, targetBranch);
         return {
           projectId,
+          ...projectInfo,
           status: 'existing',
           mrUrl: existing.web_url,
           mrIid: existing.iid,
@@ -100,7 +103,7 @@ class WebhookHandler {
 
       const diffExists = await this.gitlabClient.hasDiff(projectId, sourceBranch, targetBranch);
       if (!diffExists) {
-        return { projectId, status: 'empty_diff' };
+        return { projectId, ...projectInfo, status: 'empty_diff' };
       }
 
       const mr = await this.gitlabClient.createMergeRequest(
@@ -113,6 +116,7 @@ class WebhookHandler {
       const hasConflict = await this._checkAndHandleConflict(projectId, mr, targetBranch);
       return {
         projectId,
+        ...projectInfo,
         status: 'created',
         mrUrl: mr.web_url,
         mrIid: mr.iid,
@@ -129,7 +133,29 @@ class WebhookHandler {
         sourceBranch,
         error: error.message
       });
-      return { projectId, status: 'error', errorMessage: error.message };
+      return { projectId, ...projectInfo, status: 'error', errorMessage: error.message };
+    }
+  }
+
+  async _getProjectInfo(project) {
+    const projectName = project.name || project.pathWithNamespace || project.path_with_namespace;
+    const projectUrl = project.webUrl || project.web_url;
+    if (projectName || projectUrl || typeof this.gitlabClient.getProject !== 'function') {
+      return { projectName, projectUrl };
+    }
+
+    try {
+      const data = await this.gitlabClient.getProject(project.id);
+      return {
+        projectName: data.path_with_namespace || data.name_with_namespace || data.name,
+        projectUrl: data.web_url
+      };
+    } catch (error) {
+      logger.warn('Failed to fetch GitLab project info', {
+        projectId: project.id,
+        error: error.message
+      });
+      return {};
     }
   }
 
@@ -196,7 +222,7 @@ class WebhookHandler {
   }
 
   _formatProjectResult(result) {
-    const prefix = `• Project ${result.projectId}:`;
+    const prefix = `• ${this._formatProjectLabel(result)}:`;
     const conflictSuffix = this._formatConflictSuffix(result);
 
     switch (result.status) {
@@ -221,6 +247,24 @@ class WebhookHandler {
       default:
         return `${prefix} неизвестный результат`;
     }
+  }
+
+  _formatProjectLabel(result) {
+    const projectId = `Project ${result.projectId}`;
+
+    if (result.projectName && result.projectUrl) {
+      return `<${result.projectUrl}|${result.projectName}> (${projectId})`;
+    }
+
+    if (result.projectUrl) {
+      return `<${result.projectUrl}|${projectId}>`;
+    }
+
+    if (result.projectName) {
+      return `${result.projectName} (${projectId})`;
+    }
+
+    return projectId;
   }
 
   _formatConflictSuffix(result) {

@@ -17,6 +17,11 @@ function makeGitlabClient(overrides = {}) {
       has_conflicts: false,
       merge_status: 'can_be_merged'
     }),
+    getProject: jest.fn().mockResolvedValue({
+      name: 'repo',
+      path_with_namespace: 'group/repo',
+      web_url: 'https://git.chcadm.in/group/repo'
+    }),
     createMergeRequestNote: jest.fn().mockResolvedValue({ id: 100 }),
     ...overrides
   };
@@ -44,6 +49,8 @@ describe('WebhookHandler._processProject', () => {
 
     expect(result.status).toBe('no_branch');
     expect(result.projectId).toBe(51);
+    expect(result.projectName).toBe('group/repo');
+    expect(result.projectUrl).toBe('https://git.chcadm.in/group/repo');
   });
 
   test('multiple branches: creates or finds MR for each branch', async () => {
@@ -357,11 +364,15 @@ describe('WebhookHandler._formatProjectResult', () => {
   test('multiple_mrs', () => {
     const result = handler._formatProjectResult({
       projectId: 22,
+      projectName: 'group/repo',
+      projectUrl: 'https://git.chcadm.in/group/repo',
       status: 'multiple_mrs',
       branches: ['feature/X-1', 'bugfix/X-1'],
       mrs: [
         {
           projectId: 22,
+          projectName: 'group/repo',
+          projectUrl: 'https://git.chcadm.in/group/repo',
           status: 'created',
           mrUrl: 'https://git.chcadm.in/group/repo/-/merge_requests/1',
           mrRef: 'group/repo!1',
@@ -369,6 +380,8 @@ describe('WebhookHandler._formatProjectResult', () => {
         },
         {
           projectId: 22,
+          projectName: 'group/repo',
+          projectUrl: 'https://git.chcadm.in/group/repo',
           status: 'created',
           mrUrl: 'https://git.chcadm.in/group/repo/-/merge_requests/2',
           mrRef: 'group/repo!2',
@@ -377,8 +390,25 @@ describe('WebhookHandler._formatProjectResult', () => {
       ]
     });
     expect(result).toContain('несколько веток обработано');
+    expect(result).toContain('<https://git.chcadm.in/group/repo|group/repo> (Project 22)');
     expect(result).toContain('group/repo!1');
     expect(result).toContain('group/repo!2');
+  });
+
+  test('multiple_branches: includes repository link in manual action message', () => {
+    const result = handler._formatProjectResult({
+      projectId: 22,
+      projectName: 'group/repo',
+      projectUrl: 'https://git.chcadm.in/group/repo',
+      status: 'multiple_branches',
+      branches: ['CPAYMENT-1417/sentry-replay', 'CPAYMENT-1417/sentry-replay-test']
+    });
+
+    expect(result).toBe(
+      '• <https://git.chcadm.in/group/repo|group/repo> (Project 22): ' +
+      'несколько веток: `CPAYMENT-1417/sentry-replay`, `CPAYMENT-1417/sentry-replay-test` — ' +
+      'нужно разобраться вручную'
+    );
   });
 
   test('empty_diff', () => {
