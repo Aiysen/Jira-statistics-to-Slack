@@ -1,4 +1,5 @@
 const PipelineHandler = require('../src/gitlab/pipelineHandler');
+const { SLACK_MEMBERS } = require('../src/slack/members');
 
 function makePayload(overrides = {}) {
   return {
@@ -104,7 +105,9 @@ describe('PipelineHandler.handlePipelineEvent', () => {
       expect.stringContaining('Деплой задачи завершен'),
       { threadTs: '1700000000.000100' }
     );
-    expect(slack.postDeployNotification.mock.calls[1][0]).toContain('@Gevork @Jegor Bogomolov');
+    expect(slack.postDeployNotification.mock.calls[1][0]).toContain(
+      `<@${SLACK_MEMBERS.gevork}> <@${SLACK_MEMBERS.jegor}>`
+    );
     expect(slack.postDeployNotification.mock.calls[1][0]).toContain(
       '<https://jira.chcadm.in/browse/CPAYMENT-100|CPAYMENT-100: Deploy task>'
     );

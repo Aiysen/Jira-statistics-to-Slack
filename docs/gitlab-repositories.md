@@ -51,4 +51,4 @@
   - В GitLab MR публикуется комментарий с `@username` и пометкой `[jira-deploy-bot:conflict]`.
   - Повторный комментарий в рамках одного инстанса бота не публикуется (дедупликация по `projectId:mrIid`).
   - Настройка: `GITLAB_MENTION_ON_MR_CONFLICT` (GitLab username, по умолчанию `jbogomolov`),
-    `SLACK_MENTION_DEPLOY_CONFLICT` (текст упоминания в Slack, по умолчанию `@Jegor Bogomolov`).
+    `SLACK_MENTION_DEPLOY_CONFLICT` (алиас из `src/slack/members.js`, member ID или `<@U…>`; по умолчанию `jegor`).

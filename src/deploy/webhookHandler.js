@@ -1,4 +1,5 @@
 const logger = require('../utils/logger');
+const { resolveSlackMentions, DEFAULT_SLACK_DEPLOY_CONFLICT } = require('../slack/members');
 const { getGitlabProjects } = require('../gitlab/config');
 
 const DEDUP_WINDOW_MS = 60 * 60 * 1000;
@@ -371,7 +372,10 @@ class WebhookHandler {
 
   _formatConflictSuffix(result) {
     if (!result.hasConflict) return '';
-    const mention = process.env.SLACK_MENTION_DEPLOY_CONFLICT || '@Jegor Bogomolov';
+    const mention = resolveSlackMentions(
+      process.env.SLACK_MENTION_DEPLOY_CONFLICT,
+      DEFAULT_SLACK_DEPLOY_CONFLICT
+    );
     return ` — ⚠️ *конфликт с \`${result.targetBranch}\`*, нужно разрешить ${mention}`;
   }
 

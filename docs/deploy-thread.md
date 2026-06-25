@@ -36,6 +36,17 @@
 
 Когда GitLab присылает successful pipeline по `master` или `main`, бот отмечает следующий ожидающий MR этой задачи в том же проекте и целевой ветке как доставленный в prod. После успешных prod pipeline для всех MR задачи бот пишет в deploy thread итоговое сообщение с упоминанием ответственных и ссылкой на Jira.
 
+### Упоминания в Slack
+
+Справочник member ID: `src/slack/members.js` (`gevork`, `jegor`, `vitaly` → Slack ID). По умолчанию при завершении деплоя пингуются **Gevork** и **Jegor**; при конфликте MR — **Jegor**.
+
+Переменные окружения (необязательны, переопределяют дефолт):
+
+- `SLACK_DEPLOY_DONE_MENTIONS` — алиасы через запятую/пробел (`gevork,jegor`), member ID или `<@U…>`.
+- `SLACK_MENTION_DEPLOY_CONFLICT` — один алиас, ID или `<@U…>`.
+
+Новый человек: добавить запись в `SLACK_MEMBERS` в коде и при необходимости указать алиас в env.
+
 ## GitLab webhooks
 
 Для deploy thread нужны два GitLab webhook:

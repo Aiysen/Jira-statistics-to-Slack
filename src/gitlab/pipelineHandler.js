@@ -1,4 +1,5 @@
 const logger = require('../utils/logger');
+const { resolveSlackMentions, DEFAULT_SLACK_DEPLOY_DONE } = require('../slack/members');
 const { getGitlabProjects } = require('./config');
 
 const STATUS_ICONS = {
@@ -11,8 +12,6 @@ const STATUS_ICONS = {
 const WATCHED_BRANCHES = ['master', 'main'];
 const WATCHED_STATUSES = ['success', 'manual'];
 const JIRA_KEY_REGEX = /([A-Z][A-Z0-9]+-\d+)/;
-const DEPLOY_DONE_MENTIONS = process.env.SLACK_DEPLOY_DONE_MENTIONS || '@Gevork @Jegor Bogomolov';
-
 class PipelineHandler {
   constructor(slackClient, jiraClient = null, deployTracker = null, gitlabClient = null) {
     this.slackClient = slackClient;
@@ -178,8 +177,14 @@ class PipelineHandler {
       ? `${completion.issueKey}: ${completion.summary}`
       : completion.issueKey;
 
+    const mentions = resolveSlackMentions(
+      process.env.SLACK_DEPLOY_DONE_MENTIONS,
+      DEFAULT_SLACK_DEPLOY_DONE
+    );
+    const header = mentions ? `✅ ${mentions}` : '✅';
+
     return [
-      `✅ ${DEPLOY_DONE_MENTIONS}`,
+      header,
       `Деплой задачи завершен.`,
       `Задача: <${completion.jiraUrl}|${jiraLabel}>`
     ].join('\n');

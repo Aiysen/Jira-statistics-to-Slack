@@ -1,4 +1,5 @@
 const WebhookHandler = require('../src/deploy/webhookHandler');
+const { SLACK_MEMBERS } = require('../src/slack/members');
 
 function makeGitlabClient(overrides = {}) {
   return {
@@ -412,7 +413,7 @@ describe('WebhookHandler._formatProjectResult', () => {
     expect(result).toContain('создан');
     expect(result).toContain('конфликт');
     expect(result).toContain('master');
-    expect(result).toContain('@Jegor Bogomolov');
+    expect(result).toContain(`<@${SLACK_MEMBERS.jegor}>`);
   });
 
   test('existing with conflict: shows conflict warning and mention', () => {
@@ -427,7 +428,7 @@ describe('WebhookHandler._formatProjectResult', () => {
     expect(result).toContain('уже существует');
     expect(result).toContain('конфликт');
     expect(result).toContain('main');
-    expect(result).toContain('@Jegor Bogomolov');
+    expect(result).toContain(`<@${SLACK_MEMBERS.jegor}>`);
   });
 
   test('no_branch', () => {
