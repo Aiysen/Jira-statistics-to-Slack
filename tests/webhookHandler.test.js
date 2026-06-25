@@ -54,7 +54,7 @@ describe('WebhookHandler._processProject', () => {
     expect(result.projectUrl).toBe('https://git.chcadm.in/group/repo');
   });
 
-  test('multiple branches: creates or finds MR for each branch', async () => {
+  test('multiple branches: requires manual decision without creating MR', async () => {
     const gitlab = makeGitlabClient({
       searchBranchesByIssueKey: jest.fn().mockResolvedValue([
         { name: 'feature/CPAYMENT-1000' },
@@ -65,10 +65,10 @@ describe('WebhookHandler._processProject', () => {
 
     const result = await handler._processProject(issueKey, summary, project);
 
-    expect(result.status).toBe('multiple_mrs');
+    expect(result.status).toBe('multiple_branches');
     expect(result.branches).toEqual(['feature/CPAYMENT-1000', 'bugfix/CPAYMENT-1000']);
-    expect(result.mrs).toHaveLength(2);
-    expect(gitlab.createMergeRequest).toHaveBeenCalledTimes(2);
+    expect(result.mrs).toBeUndefined();
+    expect(gitlab.createMergeRequest).not.toHaveBeenCalled();
   });
 
   test('existing: returns link when MR already open', async () => {

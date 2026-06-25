@@ -116,16 +116,11 @@ class WebhookHandler {
       }
 
       if (branches.length > 1) {
-        const mrs = await Promise.all(
-          branches.map(branch => this._processBranch(issueKey, summary, project, branch.name, projectInfo))
-        );
-
         return {
           projectId,
           ...projectInfo,
-          status: 'multiple_mrs',
-          branches: branches.map(b => b.name),
-          mrs
+          status: 'multiple_branches',
+          branches: branches.map(b => b.name)
         };
       }
 
