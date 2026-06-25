@@ -143,11 +143,18 @@ class WebhookHandler {
     const { id: projectId, targetBranch } = project;
 
     try {
+      const diffExists = await this.gitlabClient.hasDiff(projectId, sourceBranch, targetBranch);
+      if (!diffExists) {
+        return { projectId, ...projectInfo, status: 'empty_diff' };
+      }
+
       const existing = await this.gitlabClient.getExistingMergeRequest(
         projectId, sourceBranch, targetBranch
       );
       if (existing) {
-        const hasConflict = await this._checkAndHandleConflict(projectId, existing, targetBranch);
+        const hasConflict = await this._checkAndHandleConflict(
+          projectId, existing, targetBranch, sourceBranch
+        );
         return {
           projectId,
           ...projectInfo,
@@ -161,11 +168,6 @@ class WebhookHandler {
         };
       }
 
-      const diffExists = await this.gitlabClient.hasDiff(projectId, sourceBranch, targetBranch);
-      if (!diffExists) {
-        return { projectId, ...projectInfo, status: 'empty_diff' };
-      }
-
       const mr = await this.gitlabClient.createMergeRequest(
         projectId,
         sourceBranch,
@@ -173,7 +175,9 @@ class WebhookHandler {
         `${issueKey}: ${summary}`
       );
 
-      const hasConflict = await this._checkAndHandleConflict(projectId, mr, targetBranch);
+      const hasConflict = await this._checkAndHandleConflict(
+        projectId, mr, targetBranch, sourceBranch
+      );
       return {
         projectId,
         ...projectInfo,
@@ -242,8 +246,13 @@ class WebhookHandler {
     }
   }
 
-  async _checkAndHandleConflict(projectId, mr, targetBranch) {
+  async _checkAndHandleConflict(projectId, mr, targetBranch, sourceBranch) {
     try {
+      const branch = sourceBranch || mr.source_branch;
+      if (branch && !(await this.gitlabClient.hasDiff(projectId, branch, targetBranch))) {
+        return false;
+      }
+
       const hasConflict = await this._getMrHasConflict(projectId, mr);
       if (hasConflict) {
         await this._postConflictNote(projectId, mr.iid, targetBranch);

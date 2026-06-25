@@ -109,6 +109,30 @@ describe('WebhookHandler._processProject', () => {
 
     expect(result.status).toBe('empty_diff');
     expect(gitlab.createMergeRequest).not.toHaveBeenCalled();
+    expect(gitlab.getExistingMergeRequest).not.toHaveBeenCalled();
+  });
+
+  test('empty_diff: ignores open MR and conflict when diff is empty', async () => {
+    const gitlab = makeGitlabClient({
+      searchBranchesByIssueKey: jest.fn().mockResolvedValue([
+        { name: 'feature/CPAYMENT-1000' }
+      ]),
+      hasDiff: jest.fn().mockResolvedValue(false),
+      getExistingMergeRequest: jest.fn().mockResolvedValue({
+        web_url: 'https://git.chcadm.in/group/repo/-/merge_requests/5',
+        iid: 5,
+        references: { full: 'group/repo!5' },
+        has_conflicts: true,
+        merge_status: 'cannot_be_merged'
+      })
+    });
+    const handler = new WebhookHandler(gitlab, makeSlackClient());
+
+    const result = await handler._processProject(issueKey, summary, project);
+
+    expect(result.status).toBe('empty_diff');
+    expect(gitlab.getExistingMergeRequest).not.toHaveBeenCalled();
+    expect(gitlab.createMergeRequestNote).not.toHaveBeenCalled();
   });
 
   test('created: creates MR and returns url when all conditions met', async () => {
@@ -130,6 +154,34 @@ describe('WebhookHandler._processProject', () => {
       'master',
       'CPAYMENT-1000: Test task'
     );
+    expect(gitlab.createMergeRequestNote).not.toHaveBeenCalled();
+  });
+
+  test('created: GitLab has_conflicts but empty diff does not notify conflict', async () => {
+    let hasDiffCalls = 0;
+    const gitlab = makeGitlabClient({
+      searchBranchesByIssueKey: jest.fn().mockResolvedValue([
+        { name: 'feature/CPAYMENT-1000' }
+      ]),
+      hasDiff: jest.fn().mockImplementation(async () => {
+        hasDiffCalls += 1;
+        return hasDiffCalls === 1;
+      }),
+      createMergeRequest: jest.fn().mockResolvedValue({
+        web_url: 'https://git.chcadm.in/group/repo/-/merge_requests/1',
+        iid: 1,
+        references: { full: 'group/repo!1' },
+        has_conflicts: true,
+        merge_status: 'cannot_be_merged',
+        source_branch: 'feature/CPAYMENT-1000'
+      })
+    });
+    const handler = new WebhookHandler(gitlab, makeSlackClient());
+
+    const result = await handler._processProject(issueKey, summary, project);
+
+    expect(result.status).toBe('created');
+    expect(result.hasConflict).toBe(false);
     expect(gitlab.createMergeRequestNote).not.toHaveBeenCalled();
   });
 

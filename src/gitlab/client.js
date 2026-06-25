@@ -128,13 +128,28 @@ class GitLabClient {
     const compare = await retry(
       async () => {
         const response = await this.client.get(`/api/v4/projects/${projectId}/repository/compare`, {
-          params: { from: targetBranch, to: sourceBranch, straight: true }
+          params: { from: targetBranch, to: sourceBranch, straight: false }
         });
         return response.data;
       },
       { context: { projectId, sourceBranch, targetBranch, action: 'compare' } }
     );
-    return Array.isArray(compare.diffs) && compare.diffs.length > 0;
+
+    if (compare.compare_same_ref) {
+      return false;
+    }
+
+    const commits = compare.commits;
+    if (!Array.isArray(commits) || commits.length === 0) {
+      return false;
+    }
+
+    const diffs = compare.diffs;
+    if (!Array.isArray(diffs) || diffs.length === 0) {
+      return false;
+    }
+
+    return diffs.some(entry => typeof entry.diff === 'string' && entry.diff.trim().length > 0);
   }
 
   async createMergeRequest(projectId, sourceBranch, targetBranch, title) {
