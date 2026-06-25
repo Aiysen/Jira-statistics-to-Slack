@@ -5,6 +5,7 @@ const GitLabClient = require('./gitlab/client');
 const SlackClient = require('./slack/client');
 const JiraClient = require('./jira/client');
 const WebhookHandler = require('./deploy/webhookHandler');
+const DeployTracker = require('./deploy/deployTracker');
 const PipelineHandler = require('./gitlab/pipelineHandler');
 const logger = require('./utils/logger');
 
@@ -54,8 +55,9 @@ function main() {
       const gitlabClient = new GitLabClient();
       const slackClient = new SlackClient();
       const jiraClient = new JiraClient();
-      webhookHandler = new WebhookHandler(gitlabClient, slackClient);
-      pipelineHandler = new PipelineHandler(slackClient, jiraClient);
+      const deployTracker = new DeployTracker();
+      webhookHandler = new WebhookHandler(gitlabClient, slackClient, null, deployTracker);
+      pipelineHandler = new PipelineHandler(slackClient, jiraClient, deployTracker);
       logger.info('GitLab integration enabled', {
         projects: require('./gitlab/config').getGitlabProjects().map(p => p.id)
       });

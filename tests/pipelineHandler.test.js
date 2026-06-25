@@ -78,4 +78,50 @@ describe('PipelineHandler.handlePipelineEvent', () => {
     expect(slack.getDeployThreadTs).not.toHaveBeenCalled();
     expect(slack.postDeployNotification).not.toHaveBeenCalled();
   });
+
+  test('posts deploy completion message when tracker says issue is fully deployed', async () => {
+    const slack = makeSlackClient('1700000000.000100');
+    const tracker = {
+      recordSuccessfulProdPipeline: jest.fn().mockReturnValue({
+        issueKey: 'CPAYMENT-100',
+        summary: 'Deploy task',
+        jiraUrl: 'https://jira.chcadm.in/browse/CPAYMENT-100',
+        threadTs: '1700000000.000100'
+      })
+    };
+    const handler = new PipelineHandler(slack, null, tracker);
+
+    await handler.handlePipelineEvent(makePayload());
+
+    expect(tracker.recordSuccessfulProdPipeline).toHaveBeenCalledWith(
+      'CPAYMENT-100',
+      51,
+      'master',
+      123
+    );
+    expect(slack.postDeployNotification).toHaveBeenCalledTimes(2);
+    expect(slack.postDeployNotification).toHaveBeenLastCalledWith(
+      expect.stringContaining('Деплой задачи завершен'),
+      { threadTs: '1700000000.000100' }
+    );
+    expect(slack.postDeployNotification.mock.calls[1][0]).toContain('@Gevork @Jegor Bogomolov');
+    expect(slack.postDeployNotification.mock.calls[1][0]).toContain(
+      '<https://jira.chcadm.in/browse/CPAYMENT-100|CPAYMENT-100: Deploy task>'
+    );
+  });
+
+  test('does not complete deploy on manual pipeline status', async () => {
+    const slack = makeSlackClient('1700000000.000100');
+    const tracker = {
+      recordSuccessfulProdPipeline: jest.fn()
+    };
+    const handler = new PipelineHandler(slack, null, tracker);
+
+    await handler.handlePipelineEvent(makePayload({
+      object_attributes: { status: 'manual' }
+    }));
+
+    expect(tracker.recordSuccessfulProdPipeline).not.toHaveBeenCalled();
+    expect(slack.postDeployNotification).toHaveBeenCalledTimes(1);
+  });
 });

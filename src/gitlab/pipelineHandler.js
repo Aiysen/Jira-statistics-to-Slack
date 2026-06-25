@@ -10,11 +10,13 @@ const STATUS_ICONS = {
 const WATCHED_BRANCHES = ['master', 'main'];
 const WATCHED_STATUSES = ['success', 'manual'];
 const JIRA_KEY_REGEX = /([A-Z][A-Z0-9]+-\d+)/;
+const DEPLOY_DONE_MENTIONS = process.env.SLACK_DEPLOY_DONE_MENTIONS || '@Gevork @Jegor Bogomolov';
 
 class PipelineHandler {
-  constructor(slackClient, jiraClient = null) {
+  constructor(slackClient, jiraClient = null, deployTracker = null) {
     this.slackClient = slackClient;
     this.jiraClient = jiraClient;
+    this.deployTracker = deployTracker;
   }
 
   async handlePipelineEvent(payload) {
@@ -45,6 +47,7 @@ class PipelineHandler {
     const message = this._formatMessage(payload, issueKey, issueSummary);
     const threadTs = issueKey ? this.slackClient.getDeployThreadTs(issueKey) : null;
     await this.slackClient.postDeployNotification(message, { threadTs });
+    await this._notifyIfDeployCompleted(payload, issueKey);
 
     logger.info('Pipeline notification sent', { ref, status, issueKey, threaded: Boolean(threadTs) });
   }
@@ -96,6 +99,39 @@ class PipelineHandler {
     }
 
     return message.trimEnd();
+  }
+
+  async _notifyIfDeployCompleted(payload, issueKey) {
+    if (!this.deployTracker || !issueKey || payload.object_attributes?.status !== 'success') {
+      return;
+    }
+
+    const completion = this.deployTracker.recordSuccessfulProdPipeline(
+      issueKey,
+      payload.project?.id,
+      payload.object_attributes?.ref,
+      payload.object_attributes?.id
+    );
+
+    if (!completion) {
+      return;
+    }
+
+    const message = this._formatDeployDoneMessage(completion);
+    await this.slackClient.postDeployNotification(message, { threadTs: completion.threadTs });
+    logger.info('Deploy completion notification sent', { issueKey, threadTs: completion.threadTs });
+  }
+
+  _formatDeployDoneMessage(completion) {
+    const jiraLabel = completion.summary
+      ? `${completion.issueKey}: ${completion.summary}`
+      : completion.issueKey;
+
+    return [
+      `✅ ${DEPLOY_DONE_MENTIONS}`,
+      `Деплой задачи завершен.`,
+      `Задача: <${completion.jiraUrl}|${jiraLabel}>`
+    ].join('\n');
   }
 
   _formatDuration(seconds) {

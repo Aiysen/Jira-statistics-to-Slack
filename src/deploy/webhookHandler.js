@@ -7,10 +7,11 @@ const MR_CONFLICT_NOTE_MARKER = '[jira-deploy-bot:conflict]';
 const MERGE_STATUS_CHECK_DELAY_MS = 2000;
 
 class WebhookHandler {
-  constructor(gitlabClient, slackClient, jiraBaseURL) {
+  constructor(gitlabClient, slackClient, jiraBaseURL, deployTracker = null) {
     this.gitlabClient = gitlabClient;
     this.slackClient = slackClient;
     this.jiraBaseURL = jiraBaseURL || process.env.JIRA_BASE_URL || '';
+    this.deployTracker = deployTracker;
     this.recentIssues = new Map();
     // in-memory дедупликация conflict-note: Set из "projectId:mrIid"
     this.notifiedConflicts = new Set();
@@ -33,6 +34,7 @@ class WebhookHandler {
     const message = this._formatSlackMessage(issueKey, summary, results);
     const slackResult = await this.slackClient.postDeployNotification(message);
     this.slackClient.rememberDeployThread(issueKey, slackResult?.ts);
+    this.deployTracker?.rememberIssue(issueKey, summary, this.jiraBaseURL, slackResult?.ts, results);
 
     logger.info('Deploy-ready handled', {
       issueKey,
@@ -51,15 +53,34 @@ class WebhookHandler {
       }
 
       if (branches.length > 1) {
+        const mrs = await Promise.all(
+          branches.map(branch => this._processBranch(issueKey, summary, project, branch.name))
+        );
+
         return {
           projectId,
-          status: 'multiple_branches',
-          branches: branches.map(b => b.name)
+          status: 'multiple_mrs',
+          branches: branches.map(b => b.name),
+          mrs
         };
       }
 
-      const sourceBranch = branches[0].name;
+      return await this._processBranch(issueKey, summary, project, branches[0].name);
 
+    } catch (error) {
+      logger.error('Failed to process project for deploy-ready', {
+        projectId,
+        issueKey,
+        error: error.message
+      });
+      return { projectId, status: 'error', errorMessage: error.message };
+    }
+  }
+
+  async _processBranch(issueKey, summary, project, sourceBranch) {
+    const { id: projectId, targetBranch } = project;
+
+    try {
       const existing = await this.gitlabClient.getExistingMergeRequest(
         projectId, sourceBranch, targetBranch
       );
@@ -69,7 +90,9 @@ class WebhookHandler {
           projectId,
           status: 'existing',
           mrUrl: existing.web_url,
+          mrIid: existing.iid,
           mrRef: existing.references?.full || `!${existing.iid}`,
+          sourceBranch,
           hasConflict,
           targetBranch
         };
@@ -92,7 +115,9 @@ class WebhookHandler {
         projectId,
         status: 'created',
         mrUrl: mr.web_url,
+        mrIid: mr.iid,
         mrRef: mr.references?.full || `!${mr.iid}`,
+        sourceBranch,
         hasConflict,
         targetBranch
       };
@@ -101,6 +126,7 @@ class WebhookHandler {
       logger.error('Failed to process project for deploy-ready', {
         projectId,
         issueKey,
+        sourceBranch,
         error: error.message
       });
       return { projectId, status: 'error', errorMessage: error.message };
@@ -183,6 +209,10 @@ class WebhookHandler {
       case 'multiple_branches': {
         const list = result.branches.map(b => `\`${b}\``).join(', ');
         return `${prefix} несколько веток: ${list} — нужно разобраться вручную`;
+      }
+      case 'multiple_mrs': {
+        const details = result.mrs.map(mr => this._formatProjectResult(mr)).join('\n');
+        return `${prefix} несколько веток обработано:\n${details}`;
       }
       case 'empty_diff':
         return `${prefix} diff пустой — MR не создан`;

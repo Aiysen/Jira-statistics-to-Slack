@@ -46,7 +46,7 @@ describe('WebhookHandler._processProject', () => {
     expect(result.projectId).toBe(51);
   });
 
-  test('multiple_branches: returns branch names without creating MR', async () => {
+  test('multiple branches: creates or finds MR for each branch', async () => {
     const gitlab = makeGitlabClient({
       searchBranchesByIssueKey: jest.fn().mockResolvedValue([
         { name: 'feature/CPAYMENT-1000' },
@@ -57,9 +57,10 @@ describe('WebhookHandler._processProject', () => {
 
     const result = await handler._processProject(issueKey, summary, project);
 
-    expect(result.status).toBe('multiple_branches');
+    expect(result.status).toBe('multiple_mrs');
     expect(result.branches).toEqual(['feature/CPAYMENT-1000', 'bugfix/CPAYMENT-1000']);
-    expect(gitlab.createMergeRequest).not.toHaveBeenCalled();
+    expect(result.mrs).toHaveLength(2);
+    expect(gitlab.createMergeRequest).toHaveBeenCalledTimes(2);
   });
 
   test('existing: returns link when MR already open', async () => {
@@ -274,6 +275,31 @@ describe('WebhookHandler dedup', () => {
 
     expect(slack.rememberDeployThread).toHaveBeenCalledWith('CPAYMENT-100', '1700000000.000100');
   });
+
+  test('registers created MRs in deploy tracker', async () => {
+    const gitlab = makeGitlabClient({
+      searchBranchesByIssueKey: jest.fn().mockResolvedValue([
+        { name: 'feature/CPAYMENT-100' }
+      ])
+    });
+    const slack = makeSlackClient();
+    const deployTracker = {
+      rememberIssue: jest.fn()
+    };
+    const handler = new WebhookHandler(gitlab, slack, null, deployTracker);
+
+    await handler.handleDeployReady('CPAYMENT-100', null, 'Task');
+
+    expect(deployTracker.rememberIssue).toHaveBeenCalledWith(
+      'CPAYMENT-100',
+      'Task',
+      expect.any(String),
+      '1700000000.000100',
+      expect.arrayContaining([
+        expect.objectContaining({ status: 'created', sourceBranch: 'feature/CPAYMENT-100' })
+      ])
+    );
+  });
 });
 
 describe('WebhookHandler._formatProjectResult', () => {
@@ -328,15 +354,31 @@ describe('WebhookHandler._formatProjectResult', () => {
     expect(result).toContain('51');
   });
 
-  test('multiple_branches', () => {
+  test('multiple_mrs', () => {
     const result = handler._formatProjectResult({
       projectId: 22,
-      status: 'multiple_branches',
-      branches: ['feature/X-1', 'bugfix/X-1']
+      status: 'multiple_mrs',
+      branches: ['feature/X-1', 'bugfix/X-1'],
+      mrs: [
+        {
+          projectId: 22,
+          status: 'created',
+          mrUrl: 'https://git.chcadm.in/group/repo/-/merge_requests/1',
+          mrRef: 'group/repo!1',
+          hasConflict: false
+        },
+        {
+          projectId: 22,
+          status: 'created',
+          mrUrl: 'https://git.chcadm.in/group/repo/-/merge_requests/2',
+          mrRef: 'group/repo!2',
+          hasConflict: false
+        }
+      ]
     });
-    expect(result).toContain('несколько веток');
-    expect(result).toContain('feature/X-1');
-    expect(result).toContain('bugfix/X-1');
+    expect(result).toContain('несколько веток обработано');
+    expect(result).toContain('group/repo!1');
+    expect(result).toContain('group/repo!2');
   });
 
   test('empty_diff', () => {
