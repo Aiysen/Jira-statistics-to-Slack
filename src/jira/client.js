@@ -136,6 +136,22 @@ class JiraClient {
     );
   }
 
+  async getIssueAllComments(issueKey) {
+    logger.debug('Fetching all comments', { issueKey });
+
+    return retry(
+      async () => {
+        const response = await this.client.get(`/rest/api/3/issue/${issueKey}/comment`, {
+          params: { maxResults: 100 }
+        });
+        const comments = response.data.comments || [];
+        logger.debug('All comments fetched', { issueKey, total: comments.length });
+        return comments;
+      },
+      { context: { endpoint: `/rest/api/3/issue/${issueKey}/comment` } }
+    );
+  }
+
   async getIssueSummary(issueKey) {
     logger.debug('Fetching issue summary', { issueKey });
 

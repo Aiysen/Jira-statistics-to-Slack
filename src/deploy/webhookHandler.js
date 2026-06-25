@@ -8,11 +8,12 @@ const JIRA_KEY_REGEX = /([A-Z][A-Z0-9]+-\d+)/;
 const MERGE_STATUS_CHECK_DELAY_MS = 2000;
 
 class WebhookHandler {
-  constructor(gitlabClient, slackClient, jiraBaseURL, deployTracker = null) {
+  constructor(gitlabClient, slackClient, jiraBaseURL, deployTracker = null, jiraClient = null) {
     this.gitlabClient = gitlabClient;
     this.slackClient = slackClient;
     this.jiraBaseURL = jiraBaseURL || process.env.JIRA_BASE_URL || '';
     this.deployTracker = deployTracker;
+    this.jiraClient = jiraClient;
     this.recentIssues = new Map();
     // in-memory дедупликация conflict-note: Set из "projectId:mrIid"
     this.notifiedConflicts = new Set();
@@ -32,7 +33,8 @@ class WebhookHandler {
       projects.map(project => this._processProject(issueKey, summary, project))
     );
 
-    const message = this._formatSlackMessage(issueKey, summary, results);
+    const branchHint = await this._fetchBranchHint(issueKey, results);
+    const message = this._formatSlackMessage(issueKey, summary, results, branchHint);
     const slackResult = await this.slackClient.postDeployNotification(message);
     this.slackClient.rememberDeployThread(issueKey, slackResult?.ts);
     this.deployTracker?.rememberIssue(issueKey, summary, this.jiraBaseURL, slackResult?.ts, results);
@@ -285,7 +287,7 @@ class WebhookHandler {
     logger.info('Conflict note posted to MR', { projectId, mrIid });
   }
 
-  _formatSlackMessage(issueKey, summary, results) {
+  _formatSlackMessage(issueKey, summary, results, branchHint = null) {
     const jiraUrl = `${this.jiraBaseURL}/browse/${issueKey}`;
     let message = `🚀 *Ready for Deploy* — ${issueKey}: ${summary}\n`;
     message += `Jira: <${jiraUrl}|${issueKey}>\n`;
@@ -296,6 +298,10 @@ class WebhookHandler {
       for (const result of relevant) {
         message += this._formatProjectResult(result) + '\n';
       }
+    }
+
+    if (branchHint) {
+      message += `\nИз комментария *${branchHint.author}* рекомендовал загружать в ветку \`${branchHint.branch}\`\n`;
     }
 
     return message.trimEnd();
@@ -367,6 +373,49 @@ class WebhookHandler {
     if (!result.hasConflict) return '';
     const mention = process.env.SLACK_MENTION_DEPLOY_CONFLICT || '@Jegor Bogomolov';
     return ` — ⚠️ *конфликт с \`${result.targetBranch}\`*, нужно разрешить ${mention}`;
+  }
+
+  async _fetchBranchHint(issueKey, results) {
+    if (!this.jiraClient) return null;
+
+    const multipleResult = results.find(r => r.status === 'multiple_branches');
+    if (!multipleResult) return null;
+
+    try {
+      const comments = await this.jiraClient.getIssueAllComments(issueKey);
+      return this._findBranchHintInComments(comments, multipleResult.branches);
+    } catch (error) {
+      logger.warn('Failed to fetch Jira comments for branch hint', { issueKey, error: error.message });
+      return null;
+    }
+  }
+
+  _findBranchHintInComments(comments, branches) {
+    const sortedBranches = [...branches].sort((a, b) => b.length - a.length);
+    for (let i = comments.length - 1; i >= 0; i--) {
+      const comment = comments[i];
+      const text = this._extractAdfText(comment.body);
+      for (const branch of sortedBranches) {
+        if (text.includes(branch)) {
+          return {
+            author: comment.author?.displayName || 'Unknown',
+            branch
+          };
+        }
+      }
+    }
+    return null;
+  }
+
+  _extractAdfText(node) {
+    if (!node) return '';
+    if (typeof node === 'string') return node;
+    if (node.type === 'text') return node.text || '';
+    if (Array.isArray(node.content)) {
+      return node.content.map(c => this._extractAdfText(c)).join(' ');
+    }
+    if (node.content) return this._extractAdfText(node.content);
+    return '';
   }
 
   _isDuplicate(issueKey) {

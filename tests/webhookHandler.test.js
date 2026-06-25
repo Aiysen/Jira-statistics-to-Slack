@@ -491,3 +491,178 @@ describe('WebhookHandler._formatProjectResult', () => {
     expect(result).toContain('diff пустой');
   });
 });
+
+describe('WebhookHandler._extractAdfText', () => {
+  const handler = new WebhookHandler(makeGitlabClient(), makeSlackClient());
+
+  test('extracts text from ADF doc', () => {
+    const adf = {
+      type: 'doc',
+      version: 1,
+      content: [
+        {
+          type: 'paragraph',
+          content: [
+            { type: 'text', text: 'Push to branch ' },
+            { type: 'text', text: 'CPAYMENT-1417/sentry-replay' }
+          ]
+        }
+      ]
+    };
+    expect(handler._extractAdfText(adf)).toContain('CPAYMENT-1417/sentry-replay');
+  });
+
+  test('returns string as-is', () => {
+    expect(handler._extractAdfText('plain text')).toBe('plain text');
+  });
+
+  test('returns empty string for null', () => {
+    expect(handler._extractAdfText(null)).toBe('');
+  });
+});
+
+describe('WebhookHandler._findBranchHintInComments', () => {
+  const handler = new WebhookHandler(makeGitlabClient(), makeSlackClient());
+
+  function makeComment(text, displayName = 'Vitaly Surkov') {
+    return {
+      author: { displayName },
+      body: {
+        type: 'doc',
+        version: 1,
+        content: [{ type: 'paragraph', content: [{ type: 'text', text }] }]
+      }
+    };
+  }
+
+  test('returns hint when comment mentions a branch from the list', () => {
+    const comments = [
+      makeComment('Загружай в ветку CPAYMENT-1417/sentry-replay', 'Vitaly Surkov')
+    ];
+    const result = handler._findBranchHintInComments(comments, [
+      'CPAYMENT-1417/sentry-replay',
+      'CPAYMENT-1417/sentry-replay-test'
+    ]);
+    expect(result).toEqual({ author: 'Vitaly Surkov', branch: 'CPAYMENT-1417/sentry-replay' });
+  });
+
+  test('returns null when no comment mentions any branch', () => {
+    const comments = [makeComment('Обычный комментарий без веток')];
+    const result = handler._findBranchHintInComments(comments, [
+      'CPAYMENT-1417/sentry-replay',
+      'CPAYMENT-1417/sentry-replay-test'
+    ]);
+    expect(result).toBeNull();
+  });
+
+  test('returns the most recent matching comment', () => {
+    const comments = [
+      makeComment('Пушь в CPAYMENT-1417/sentry-replay', 'First Person'),
+      makeComment('Нет, лучше CPAYMENT-1417/sentry-replay-test', 'Vitaly Surkov')
+    ];
+    const result = handler._findBranchHintInComments(comments, [
+      'CPAYMENT-1417/sentry-replay',
+      'CPAYMENT-1417/sentry-replay-test'
+    ]);
+    expect(result?.author).toBe('Vitaly Surkov');
+    expect(result?.branch).toBe('CPAYMENT-1417/sentry-replay-test');
+  });
+
+  test('returns null for empty comments array', () => {
+    expect(handler._findBranchHintInComments([], ['CPAYMENT-1417/sentry-replay'])).toBeNull();
+  });
+});
+
+describe('WebhookHandler branch hint in deploy message', () => {
+  test('includes branch hint when multiple_branches and comment matches', async () => {
+    const gitlab = makeGitlabClient({
+      searchBranchesByIssueKey: jest.fn().mockResolvedValue([
+        { name: 'CPAYMENT-1417/sentry-replay' },
+        { name: 'CPAYMENT-1417/sentry-replay-test' }
+      ])
+    });
+    const slack = makeSlackClient();
+    const jiraClient = {
+      getIssueAllComments: jest.fn().mockResolvedValue([
+        {
+          author: { displayName: 'Vitaly Surkov' },
+          body: {
+            type: 'doc',
+            version: 1,
+            content: [{
+              type: 'paragraph',
+              content: [{ type: 'text', text: 'Загружай в ветку CPAYMENT-1417/sentry-replay' }]
+            }]
+          }
+        }
+      ])
+    };
+    const handler = new WebhookHandler(gitlab, slack, 'https://jira.example.com', null, jiraClient);
+
+    await handler.handleDeployReady('CPAYMENT-1417', null, 'Внедрить Sentry Replay');
+
+    const message = slack.postDeployNotification.mock.calls[0][0];
+    expect(message).toContain('Vitaly Surkov');
+    expect(message).toContain('CPAYMENT-1417/sentry-replay');
+    expect(message).toContain('рекомендовал загружать в ветку');
+  });
+
+  test('does not include hint line when no matching comment', async () => {
+    const gitlab = makeGitlabClient({
+      searchBranchesByIssueKey: jest.fn().mockResolvedValue([
+        { name: 'CPAYMENT-1417/sentry-replay' },
+        { name: 'CPAYMENT-1417/sentry-replay-test' }
+      ])
+    });
+    const slack = makeSlackClient();
+    const jiraClient = {
+      getIssueAllComments: jest.fn().mockResolvedValue([
+        {
+          author: { displayName: 'Someone' },
+          body: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: 'no branch here' }] }] }
+        }
+      ])
+    };
+    const handler = new WebhookHandler(gitlab, slack, 'https://jira.example.com', null, jiraClient);
+
+    await handler.handleDeployReady('CPAYMENT-1417', null, 'Внедрить Sentry Replay');
+
+    const message = slack.postDeployNotification.mock.calls[0][0];
+    expect(message).not.toContain('рекомендовал загружать в ветку');
+  });
+
+  test('does not include hint when jiraClient is not provided', async () => {
+    const gitlab = makeGitlabClient({
+      searchBranchesByIssueKey: jest.fn().mockResolvedValue([
+        { name: 'CPAYMENT-1417/sentry-replay' },
+        { name: 'CPAYMENT-1417/sentry-replay-test' }
+      ])
+    });
+    const slack = makeSlackClient();
+    const handler = new WebhookHandler(gitlab, slack, 'https://jira.example.com');
+
+    await handler.handleDeployReady('CPAYMENT-1417', null, 'Внедрить Sentry Replay');
+
+    const message = slack.postDeployNotification.mock.calls[0][0];
+    expect(message).not.toContain('рекомендовал загружать в ветку');
+  });
+
+  test('does not include hint when single branch (not multiple_branches)', async () => {
+    const gitlab = makeGitlabClient({
+      searchBranchesByIssueKey: jest.fn().mockResolvedValue([
+        { name: 'CPAYMENT-1417/sentry-replay' }
+      ])
+    });
+    const slack = makeSlackClient();
+    const jiraClient = {
+      getIssueAllComments: jest.fn().mockResolvedValue([])
+    };
+    const handler = new WebhookHandler(gitlab, slack, 'https://jira.example.com', null, jiraClient);
+
+    await handler.handleDeployReady('CPAYMENT-1417', null, 'Внедрить Sentry Replay');
+
+    expect(jiraClient.getIssueAllComments).not.toHaveBeenCalled();
+    const message = slack.postDeployNotification.mock.calls[0][0];
+    expect(message).not.toContain('рекомендовал загружать в ветку');
+  });
+});
