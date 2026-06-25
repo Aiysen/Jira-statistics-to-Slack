@@ -14,26 +14,40 @@ class DeployTracker {
       return;
     }
 
-    this.issues.set(issueKey, {
-      issueKey,
-      summary,
-      jiraUrl: this._buildJiraUrl(jiraBaseURL, issueKey),
-      threadTs,
-      mergeRequests,
-      seenPipelineIds: new Set(),
-      notified: false,
-      createdAt: Date.now(),
-    });
+    const issue = this._getOrCreateIssue(issueKey, summary, jiraBaseURL, threadTs);
+    for (const mr of mergeRequests) {
+      this._addMergeRequest(issue, mr);
+    }
+  }
+
+  rememberMergeRequest(issueKey, summary, jiraBaseURL, threadTs, mergeRequest) {
+    this._cleanup();
+    const issue = this._getOrCreateIssue(issueKey, summary, jiraBaseURL, threadTs);
+    const added = this._addMergeRequest(issue, this._normalizeMergeRequest(mergeRequest));
+
+    return {
+      added,
+      issueKey: issue.issueKey,
+      summary: issue.summary,
+      jiraUrl: issue.jiraUrl,
+      threadTs: issue.threadTs,
+    };
+  }
+
+  hasIssue(issueKey) {
+    this._cleanup();
+    return this.issues.has(issueKey);
   }
 
   recordSuccessfulProdPipeline(issueKey, projectId, targetBranch, pipelineId) {
     this._cleanup();
     const issue = this.issues.get(issueKey);
-    if (!issue || issue.notified || issue.seenPipelineIds.has(pipelineId)) {
+    const seenKey = `${projectId}:${pipelineId}`;
+    if (!issue || issue.notified || issue.seenPipelineIds.has(seenKey)) {
       return null;
     }
 
-    issue.seenPipelineIds.add(pipelineId);
+    issue.seenPipelineIds.add(seenKey);
 
     const pending = issue.mergeRequests.find(mr => {
       return mr.projectId === projectId &&
@@ -65,15 +79,61 @@ class DeployTracker {
     return results
       .flatMap(result => result.status === 'multiple_mrs' ? result.mrs : [result])
       .filter(result => ['created', 'existing'].includes(result.status))
-      .map(result => ({
-        projectId: result.projectId,
-        mrIid: result.mrIid,
-        mrRef: result.mrRef,
-        mrUrl: result.mrUrl,
-        sourceBranch: result.sourceBranch,
-        targetBranch: result.targetBranch,
-        status: 'pending',
-      }));
+      .map(result => this._normalizeMergeRequest(result));
+  }
+
+  _getOrCreateIssue(issueKey, summary, jiraBaseURL, threadTs) {
+    const existing = this.issues.get(issueKey);
+    if (existing) {
+      if (summary && (!existing.summary || existing.summary === issueKey)) {
+        existing.summary = summary;
+      }
+      if (threadTs && !existing.threadTs) {
+        existing.threadTs = threadTs;
+      }
+      existing.jiraUrl = existing.jiraUrl || this._buildJiraUrl(jiraBaseURL, issueKey);
+      return existing;
+    }
+
+    const issue = {
+      issueKey,
+      summary,
+      jiraUrl: this._buildJiraUrl(jiraBaseURL, issueKey),
+      threadTs,
+      mergeRequests: [],
+      seenPipelineIds: new Set(),
+      notified: false,
+      createdAt: Date.now(),
+    };
+
+    this.issues.set(issueKey, issue);
+    return issue;
+  }
+
+  _addMergeRequest(issue, mergeRequest) {
+    const exists = issue.mergeRequests.some(mr => {
+      return mr.projectId === mergeRequest.projectId && mr.mrIid === mergeRequest.mrIid;
+    });
+
+    if (exists) {
+      return false;
+    }
+
+    issue.mergeRequests.push(mergeRequest);
+    issue.notified = false;
+    return true;
+  }
+
+  _normalizeMergeRequest(mergeRequest) {
+    return {
+      projectId: mergeRequest.projectId,
+      mrIid: mergeRequest.mrIid,
+      mrRef: mergeRequest.mrRef,
+      mrUrl: mergeRequest.mrUrl,
+      sourceBranch: mergeRequest.sourceBranch,
+      targetBranch: mergeRequest.targetBranch,
+      status: mergeRequest.status === DEPLOYED_STATUS ? DEPLOYED_STATUS : 'pending',
+    };
   }
 
   _buildJiraUrl(jiraBaseURL, issueKey) {

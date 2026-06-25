@@ -30,7 +30,8 @@ function makeGitlabClient(overrides = {}) {
 function makeSlackClient() {
   return {
     postDeployNotification: jest.fn().mockResolvedValue({ ts: '1700000000.000100' }),
-    rememberDeployThread: jest.fn()
+    rememberDeployThread: jest.fn(),
+    getDeployThreadTs: jest.fn().mockReturnValue('1700000000.000100')
   };
 }
 
@@ -306,6 +307,80 @@ describe('WebhookHandler dedup', () => {
         expect.objectContaining({ status: 'created', sourceBranch: 'feature/CPAYMENT-100' })
       ])
     );
+  });
+});
+
+describe('WebhookHandler.handleMergeRequestEvent', () => {
+  function makeMergeRequestPayload(overrides = {}) {
+    return {
+      object_kind: 'merge_request',
+      project: {
+        id: 22,
+        name: 'repo',
+        path_with_namespace: 'group/repo',
+        web_url: 'https://git.chcadm.in/group/repo'
+      },
+      object_attributes: {
+        iid: 7,
+        title: 'CPAYMENT-1417: sentry replay',
+        source_branch: 'CPAYMENT-1417/sentry-replay',
+        target_branch: 'main',
+        state: 'opened',
+        url: 'https://git.chcadm.in/group/repo/-/merge_requests/7',
+        references: { full: 'group/repo!7' },
+        ...overrides.object_attributes
+      },
+      ...overrides
+    };
+  }
+
+  test('registers manual MR and posts note into deploy thread', async () => {
+    const slack = makeSlackClient();
+    const deployTracker = {
+      rememberMergeRequest: jest.fn().mockReturnValue({
+        added: true,
+        jiraUrl: 'https://jira.chcadm.in/browse/CPAYMENT-1417',
+        threadTs: '1700000000.000100'
+      })
+    };
+    const handler = new WebhookHandler(makeGitlabClient(), slack, 'https://jira.chcadm.in', deployTracker);
+
+    await handler.handleMergeRequestEvent(makeMergeRequestPayload());
+
+    expect(deployTracker.rememberMergeRequest).toHaveBeenCalledWith(
+      'CPAYMENT-1417',
+      'CPAYMENT-1417: sentry replay',
+      'https://jira.chcadm.in',
+      '1700000000.000100',
+      expect.objectContaining({
+        projectId: 22,
+        mrIid: 7,
+        sourceBranch: 'CPAYMENT-1417/sentry-replay',
+        targetBranch: 'main'
+      })
+    );
+    expect(slack.postDeployNotification).toHaveBeenCalledWith(
+      expect.stringContaining('Ручной MR добавлен в отслеживание деплоя'),
+      { threadTs: '1700000000.000100' }
+    );
+  });
+
+  test('ignores MR without Jira key', async () => {
+    const slack = makeSlackClient();
+    const deployTracker = {
+      rememberMergeRequest: jest.fn()
+    };
+    const handler = new WebhookHandler(makeGitlabClient(), slack, 'https://jira.chcadm.in', deployTracker);
+
+    await handler.handleMergeRequestEvent(makeMergeRequestPayload({
+      object_attributes: {
+        title: 'No Jira key',
+        source_branch: 'feature/sentry-replay'
+      }
+    }));
+
+    expect(deployTracker.rememberMergeRequest).not.toHaveBeenCalled();
+    expect(slack.postDeployNotification).not.toHaveBeenCalled();
   });
 });
 

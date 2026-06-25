@@ -3,6 +3,7 @@ const { getGitlabProjects } = require('../gitlab/config');
 
 const DEDUP_WINDOW_MS = 60 * 60 * 1000;
 const MR_CONFLICT_NOTE_MARKER = '[jira-deploy-bot:conflict]';
+const JIRA_KEY_REGEX = /([A-Z][A-Z0-9]+-\d+)/;
 // После создания MR GitLab может ещё вычислять merge_status; ждём и делаем один повторный запрос
 const MERGE_STATUS_CHECK_DELAY_MS = 2000;
 
@@ -39,6 +40,67 @@ class WebhookHandler {
     logger.info('Deploy-ready handled', {
       issueKey,
       results: results.map(r => ({ projectId: r.projectId, status: r.status, hasConflict: r.hasConflict }))
+    });
+  }
+
+  async handleMergeRequestEvent(payload) {
+    if (!this.deployTracker) {
+      logger.debug('Merge request event ignored: deploy tracker is not configured');
+      return;
+    }
+
+    const mr = payload.object_attributes || {};
+    if (mr.state === 'closed') {
+      logger.debug('Merge request event ignored: MR is closed', { mrIid: mr.iid });
+      return;
+    }
+
+    const issueKey = this._extractIssueKey([mr.title, mr.source_branch].filter(Boolean).join(' '));
+    if (!issueKey) {
+      logger.debug('Merge request event ignored: Jira key not found', { mrIid: mr.iid });
+      return;
+    }
+
+    const project = this._findConfiguredProject(payload.project?.id, mr.target_branch);
+    if (!project) {
+      logger.debug('Merge request event ignored: project or target branch is not configured', {
+        projectId: payload.project?.id,
+        targetBranch: mr.target_branch
+      });
+      return;
+    }
+
+    const projectInfo = await this._getProjectInfo({
+      id: project.id,
+      name: payload.project?.name,
+      path_with_namespace: payload.project?.path_with_namespace,
+      web_url: payload.project?.web_url
+    });
+    const threadTs = this.slackClient.getDeployThreadTs?.(issueKey) || null;
+    const result = this.deployTracker.rememberMergeRequest(
+      issueKey,
+      mr.title || issueKey,
+      this.jiraBaseURL,
+      threadTs,
+      this._toTrackedMergeRequest(project.id, mr, projectInfo)
+    );
+
+    if (result.added && threadTs) {
+      await this.slackClient.postDeployNotification(
+        this._formatManualMergeRequestMessage(issueKey, result.jiraUrl, mr, {
+          projectId: project.id,
+          ...projectInfo
+        }),
+        { threadTs }
+      );
+    }
+
+    logger.info('Merge request registered for deploy tracking', {
+      issueKey,
+      projectId: project.id,
+      mrIid: mr.iid,
+      added: result.added,
+      threaded: Boolean(threadTs)
     });
   }
 
@@ -135,6 +197,29 @@ class WebhookHandler {
       });
       return { projectId, ...projectInfo, status: 'error', errorMessage: error.message };
     }
+  }
+
+  _findConfiguredProject(projectId, targetBranch) {
+    return getGitlabProjects().find(project => {
+      return project.id === projectId && project.targetBranch === targetBranch;
+    });
+  }
+
+  _extractIssueKey(text) {
+    const match = text.match(JIRA_KEY_REGEX);
+    return match ? match[1] : null;
+  }
+
+  _toTrackedMergeRequest(projectId, mr, projectInfo = {}) {
+    return {
+      projectId,
+      ...projectInfo,
+      mrIid: mr.iid,
+      mrRef: mr.references?.full || `!${mr.iid}`,
+      mrUrl: mr.url || mr.web_url,
+      sourceBranch: mr.source_branch,
+      targetBranch: mr.target_branch,
+    };
   }
 
   async _getProjectInfo(project) {
@@ -247,6 +332,22 @@ class WebhookHandler {
       default:
         return `${prefix} неизвестный результат`;
     }
+  }
+
+  _formatManualMergeRequestMessage(issueKey, jiraUrl, mr, projectInfo) {
+    const projectLabel = this._formatProjectLabel({
+      projectId: projectInfo.projectId || '',
+      ...projectInfo
+    });
+    const mrRef = mr.references?.full || `!${mr.iid}`;
+    const mrUrl = mr.url || mr.web_url;
+    const mrLink = mrUrl ? `<${mrUrl}|${mrRef}>` : mrRef;
+
+    return [
+      `🔀 Ручной MR добавлен в отслеживание деплоя — ${mrLink}`,
+      `Задача: <${jiraUrl}|${issueKey}>`,
+      `Репозиторий: ${projectLabel}`
+    ].join('\n');
   }
 
   _formatProjectLabel(result) {

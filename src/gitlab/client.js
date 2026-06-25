@@ -96,6 +96,34 @@ class GitLabClient {
     return mrs.length > 0 ? mrs[0] : null;
   }
 
+  async listMergeRequestsByIssueKey(projectId, issueKey, targetBranch) {
+    const mrs = await retry(
+      async () => {
+        const response = await this.client.get(`/api/v4/projects/${projectId}/merge_requests`, {
+          params: {
+            state: 'all',
+            target_branch: targetBranch,
+            order_by: 'updated_at',
+            sort: 'desc',
+            per_page: 100
+          }
+        });
+        return response.data;
+      },
+      { context: { projectId, issueKey, targetBranch, action: 'list_mrs_by_issue' } }
+    );
+
+    return mrs.filter(mr => {
+      if (mr.state === 'closed') {
+        return false;
+      }
+
+      return [mr.title, mr.source_branch].some(value => {
+        return typeof value === 'string' && value.includes(issueKey);
+      });
+    });
+  }
+
   async hasDiff(projectId, sourceBranch, targetBranch) {
     const compare = await retry(
       async () => {

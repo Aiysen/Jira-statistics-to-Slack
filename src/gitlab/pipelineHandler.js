@@ -1,4 +1,5 @@
 const logger = require('../utils/logger');
+const { getGitlabProjects } = require('./config');
 
 const STATUS_ICONS = {
   success: '✅',
@@ -13,10 +14,11 @@ const JIRA_KEY_REGEX = /([A-Z][A-Z0-9]+-\d+)/;
 const DEPLOY_DONE_MENTIONS = process.env.SLACK_DEPLOY_DONE_MENTIONS || '@Gevork @Jegor Bogomolov';
 
 class PipelineHandler {
-  constructor(slackClient, jiraClient = null, deployTracker = null) {
+  constructor(slackClient, jiraClient = null, deployTracker = null, gitlabClient = null) {
     this.slackClient = slackClient;
     this.jiraClient = jiraClient;
     this.deployTracker = deployTracker;
+    this.gitlabClient = gitlabClient;
   }
 
   async handlePipelineEvent(payload) {
@@ -47,7 +49,7 @@ class PipelineHandler {
     const message = this._formatMessage(payload, issueKey, issueSummary);
     const threadTs = issueKey ? this.slackClient.getDeployThreadTs(issueKey) : null;
     await this.slackClient.postDeployNotification(message, { threadTs });
-    await this._notifyIfDeployCompleted(payload, issueKey);
+    await this._notifyIfDeployCompleted(payload, issueKey, issueSummary, threadTs);
 
     logger.info('Pipeline notification sent', { ref, status, issueKey, threaded: Boolean(threadTs) });
   }
@@ -101,10 +103,12 @@ class PipelineHandler {
     return message.trimEnd();
   }
 
-  async _notifyIfDeployCompleted(payload, issueKey) {
+  async _notifyIfDeployCompleted(payload, issueKey, issueSummary, threadTs) {
     if (!this.deployTracker || !issueKey || payload.object_attributes?.status !== 'success') {
       return;
     }
+
+    await this._reconcileTrackedMergeRequests(payload, issueKey, issueSummary, threadTs);
 
     const completion = this.deployTracker.recordSuccessfulProdPipeline(
       issueKey,
@@ -120,6 +124,53 @@ class PipelineHandler {
     const message = this._formatDeployDoneMessage(completion);
     await this.slackClient.postDeployNotification(message, { threadTs: completion.threadTs });
     logger.info('Deploy completion notification sent', { issueKey, threadTs: completion.threadTs });
+  }
+
+  async _reconcileTrackedMergeRequests(payload, issueKey, issueSummary, threadTs) {
+    if (!this.gitlabClient || typeof this.gitlabClient.listMergeRequestsByIssueKey !== 'function') {
+      return;
+    }
+
+    const projectId = payload.project?.id;
+    const targetBranch = payload.object_attributes?.ref;
+    const project = getGitlabProjects().find(item => {
+      return item.id === projectId && item.targetBranch === targetBranch;
+    });
+
+    if (!project) {
+      return;
+    }
+
+    try {
+      const mrs = await this.gitlabClient.listMergeRequestsByIssueKey(projectId, issueKey, targetBranch);
+      for (const mr of mrs) {
+        this.deployTracker.rememberMergeRequest(
+          issueKey,
+          issueSummary || mr.title || issueKey,
+          process.env.JIRA_BASE_URL || '',
+          threadTs,
+          this._toTrackedMergeRequest(mr, payload.project, targetBranch)
+        );
+      }
+    } catch (error) {
+      logger.warn('Failed to reconcile merge requests for pipeline', {
+        issueKey,
+        projectId,
+        targetBranch,
+        error: error.message
+      });
+    }
+  }
+
+  _toTrackedMergeRequest(mr, project, targetBranch) {
+    return {
+      projectId: project?.id,
+      mrIid: mr.iid,
+      mrRef: mr.references?.full || `!${mr.iid}`,
+      mrUrl: mr.web_url,
+      sourceBranch: mr.source_branch,
+      targetBranch: mr.target_branch || targetBranch,
+    };
   }
 
   _formatDeployDoneMessage(completion) {

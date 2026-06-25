@@ -124,4 +124,47 @@ describe('PipelineHandler.handlePipelineEvent', () => {
     expect(tracker.recordSuccessfulProdPipeline).not.toHaveBeenCalled();
     expect(slack.postDeployNotification).toHaveBeenCalledTimes(1);
   });
+
+  test('reconciles manual MRs from GitLab before recording successful prod pipeline', async () => {
+    const slack = makeSlackClient('1700000000.000100');
+    const tracker = {
+      rememberMergeRequest: jest.fn(),
+      recordSuccessfulProdPipeline: jest.fn().mockReturnValue(null)
+    };
+    const gitlab = {
+      listMergeRequestsByIssueKey: jest.fn().mockResolvedValue([
+        {
+          iid: 7,
+          title: 'CPAYMENT-100 Deploy task',
+          source_branch: 'CPAYMENT-100/manual-mr',
+          target_branch: 'master',
+          web_url: 'https://git.chcadm.in/group/repo/-/merge_requests/7',
+          references: { full: 'group/repo!7' }
+        }
+      ])
+    };
+    const handler = new PipelineHandler(slack, null, tracker, gitlab);
+
+    await handler.handlePipelineEvent(makePayload());
+
+    expect(gitlab.listMergeRequestsByIssueKey).toHaveBeenCalledWith(51, 'CPAYMENT-100', 'master');
+    expect(tracker.rememberMergeRequest).toHaveBeenCalledWith(
+      'CPAYMENT-100',
+      'CPAYMENT-100 Deploy task',
+      expect.any(String),
+      '1700000000.000100',
+      expect.objectContaining({
+        projectId: 51,
+        mrIid: 7,
+        sourceBranch: 'CPAYMENT-100/manual-mr',
+        targetBranch: 'master'
+      })
+    );
+    expect(tracker.recordSuccessfulProdPipeline).toHaveBeenCalledWith(
+      'CPAYMENT-100',
+      51,
+      'master',
+      123
+    );
+  });
 });

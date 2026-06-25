@@ -18,6 +18,7 @@
 3. Уведомление о завершении watched pipeline в `master` или `main`.
 4. Уведомление о manual pipeline, когда stage завершён и prod ждёт ручного запуска.
 5. Итоговое сообщение о завершении деплоя задачи, когда все MR этой задачи получили successful prod pipeline.
+6. Уведомление о ручном MR, если он создан или обновлён человеком и содержит Jira-key в названии или source branch.
 
 ## Как связывается задача и pipeline
 
@@ -31,7 +32,18 @@
 
 При `Ready for Deploy` бот запоминает все MR, которые были созданы или найдены для Jira-задачи. Если в одном GitLab-проекте найдено несколько веток с ключом задачи, каждая ветка обрабатывается как отдельный MR.
 
+Если MR создан вручную, GitLab merge request webhook регистрирует его в том же deploy tracker, когда Jira-key есть в `title` или `source_branch`. Если webhook не пришёл или бот был перезапущен, successful pipeline дополнительно делает fallback-поиск MR по Jira-key в GitLab.
+
 Когда GitLab присылает successful pipeline по `master` или `main`, бот отмечает следующий ожидающий MR этой задачи в том же проекте и целевой ветке как доставленный в prod. После успешных prod pipeline для всех MR задачи бот пишет в deploy thread итоговое сообщение с упоминанием ответственных и ссылкой на Jira.
+
+## GitLab webhooks
+
+Для deploy thread нужны два GitLab webhook:
+
+- `POST /webhooks/gitlab/pipeline` — Pipeline events.
+- `POST /webhooks/gitlab/merge-request` — Merge request events.
+
+Для merge request webhook можно использовать отдельный secret `GITLAB_MR_WEBHOOK_TOKEN`. Если он не задан, бот использует `GITLAB_PIPELINE_WEBHOOK_TOKEN`.
 
 ## Ограничения
 
@@ -40,6 +52,7 @@
 - После рестарта сервиса уже созданные треды не восстанавливаются автоматически.
 - Текущий срок хранения связи в памяти — 7 дней.
 - Pipeline попадёт в тред только если ключ задачи есть в первом заголовке commit message.
+- Ручной MR попадёт в тред только если ключ задачи есть в MR title или source branch.
 
 ## Как ссылаться в задачах
 

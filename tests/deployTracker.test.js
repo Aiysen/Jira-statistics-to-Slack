@@ -44,4 +44,40 @@ describe('DeployTracker', () => {
       threadTs: '1700000000.000100',
     });
   });
+
+  test('adds manually registered MR only once', () => {
+    const tracker = new DeployTracker();
+
+    const first = tracker.rememberMergeRequest(
+      'CPAYMENT-1417',
+      'CPAYMENT-1417 sentry replay',
+      'https://jira.chcadm.in',
+      '1700000000.000100',
+      {
+        projectId: 22,
+        mrIid: 7,
+        mrRef: 'group/repo!7',
+        mrUrl: 'https://git.chcadm.in/group/repo/-/merge_requests/7',
+        sourceBranch: 'CPAYMENT-1417/sentry-replay',
+        targetBranch: 'main',
+      }
+    );
+    const second = tracker.rememberMergeRequest(
+      'CPAYMENT-1417',
+      'CPAYMENT-1417 sentry replay',
+      'https://jira.chcadm.in',
+      '1700000000.000100',
+      {
+        projectId: 22,
+        mrIid: 7,
+        mrRef: 'group/repo!7',
+        mrUrl: 'https://git.chcadm.in/group/repo/-/merge_requests/7',
+        sourceBranch: 'CPAYMENT-1417/sentry-replay',
+        targetBranch: 'main',
+      }
+    );
+
+    expect(first.added).toBe(true);
+    expect(second.added).toBe(false);
+  });
 });

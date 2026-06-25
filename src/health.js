@@ -19,6 +19,8 @@ class HealthServer {
         this._handleDeployWebhook(req, res);
       } else if (req.method === 'POST' && req.url === '/webhooks/gitlab/pipeline') {
         this._handlePipelineWebhook(req, res);
+      } else if (req.method === 'POST' && req.url === '/webhooks/gitlab/merge-request') {
+        this._handleMergeRequestWebhook(req, res);
       } else {
         res.writeHead(404, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Not found' }));
@@ -142,6 +144,55 @@ class HealthServer {
 
       this.pipelineHandler.handlePipelineEvent(payload)
         .catch(err => logger.error('Pipeline webhook handler failed', { error: err.message }));
+    });
+  }
+
+  _handleMergeRequestWebhook(req, res) {
+    if (!this.webhookHandler) {
+      res.writeHead(503, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'GitLab not configured' }));
+      return;
+    }
+
+    const expectedToken = process.env.GITLAB_MR_WEBHOOK_TOKEN || process.env.GITLAB_PIPELINE_WEBHOOK_TOKEN;
+    if (expectedToken && req.headers['x-gitlab-token'] !== expectedToken) {
+      logger.warn('Merge request webhook: invalid token');
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unauthorized' }));
+      return;
+    }
+
+    let body = '';
+
+    req.on('error', (err) => {
+      logger.error('Merge request webhook request error', { error: err.message });
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Request error' }));
+    });
+
+    req.on('data', (chunk) => { body += chunk; });
+
+    req.on('end', () => {
+      let payload;
+      try {
+        payload = JSON.parse(body);
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Invalid JSON' }));
+        return;
+      }
+
+      if (payload.object_kind !== 'merge_request') {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Expected merge_request event' }));
+        return;
+      }
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true }));
+
+      this.webhookHandler.handleMergeRequestEvent(payload)
+        .catch(err => logger.error('Merge request webhook handler failed', { error: err.message }));
     });
   }
 
