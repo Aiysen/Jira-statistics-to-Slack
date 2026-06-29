@@ -7,6 +7,7 @@ const JiraClient = require('./jira/client');
 const WebhookHandler = require('./deploy/webhookHandler');
 const DeployTracker = require('./deploy/deployTracker');
 const PipelineHandler = require('./gitlab/pipelineHandler');
+const IssueCreatedHandler = require('./jira/issueCreatedHandler');
 const logger = require('./utils/logger');
 
 function validateConfig() {
@@ -51,9 +52,11 @@ function main() {
 
     let webhookHandler = null;
     let pipelineHandler = null;
+    const slackClient = new SlackClient();
+    const issueCreatedHandler = new IssueCreatedHandler(slackClient);
+
     if (GitLabClient.isConfigured()) {
       const gitlabClient = new GitLabClient();
-      const slackClient = new SlackClient();
       const jiraClient = new JiraClient();
       const deployTracker = new DeployTracker();
       webhookHandler = new WebhookHandler(gitlabClient, slackClient, null, deployTracker, jiraClient);
@@ -65,7 +68,7 @@ function main() {
       logger.info('GitLab integration disabled (GITLAB_BASE_URL or GITLAB_TOKEN not set)');
     }
 
-    const healthServer = new HealthServer(webhookHandler, pipelineHandler);
+    const healthServer = new HealthServer(webhookHandler, pipelineHandler, issueCreatedHandler);
     healthServer.start();
 
     const cronSchedule = process.env.CRON_SCHEDULE || '0 11 * * *';

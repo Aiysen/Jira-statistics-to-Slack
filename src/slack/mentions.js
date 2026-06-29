@@ -28,4 +28,4 @@ function formatSlackMentions(raw) {
     .join(' ');
 }
 
-module.exports = { formatSlackMentions };
+module.exports = { formatSlackMentions, SLACK_USER_ID_REGEX };

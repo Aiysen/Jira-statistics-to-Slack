@@ -1,6 +1,12 @@
 const { WebClient } = require('@slack/web-api');
 const logger = require('../utils/logger');
 const { retry } = require('../utils/retry');
+const {
+  resolveBotMentionFromConfig,
+  isSlackUserId,
+  expandBotMentionToken,
+  DEFAULT_JIRA_REVIEW_BOT,
+} = require('./botMention');
 
 const DEPLOY_THREAD_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -15,6 +21,7 @@ class SlackClient {
 
     this.client = new WebClient(this.token);
     this.deployThreads = new Map();
+    this.reviewBotMentionCache = null;
   }
 
   async postReport(formattedReport) {
@@ -93,6 +100,48 @@ class SlackClient {
       },
       { context: { action: 'post_deploy_notification' } }
     );
+  }
+
+  async postIssueCreatedThread(rootMessage, threadMessage) {
+    logger.info('Posting issue-created thread to Slack');
+
+    const mainResult = await retry(
+      () => this.client.chat.postMessage({
+        channel: this.channelId,
+        text: rootMessage,
+        unfurl_links: false,
+        unfurl_media: false,
+      }),
+      { context: { action: 'post_issue_created_thread_root' } }
+    );
+
+    await retry(
+      () => this._postThreadMessage(mainResult.ts, threadMessage),
+      { context: { action: 'post_issue_created_thread_reply' } }
+    );
+
+    logger.info('Issue-created thread posted', { ts: mainResult.ts });
+    return mainResult;
+  }
+
+  async resolveJiraReviewBotMention() {
+    if (this.reviewBotMentionCache !== null) {
+      return this.reviewBotMentionCache;
+    }
+
+    const configured = process.env.SLACK_JIRA_REVIEW_BOT?.trim() || DEFAULT_JIRA_REVIEW_BOT;
+    const expanded = expandBotMentionToken(configured);
+
+    if (!isSlackUserId(expanded) && !configured.includes('<@')) {
+      logger.warn('SLACK_JIRA_REVIEW_BOT is not a known alias or Slack user ID — mention skipped', {
+        configured,
+      });
+      this.reviewBotMentionCache = '';
+      return '';
+    }
+
+    this.reviewBotMentionCache = resolveBotMentionFromConfig(configured);
+    return this.reviewBotMentionCache;
   }
 
   rememberDeployThread(issueKey, threadTs) {
