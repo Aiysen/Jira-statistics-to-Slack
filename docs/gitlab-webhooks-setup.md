@@ -9,7 +9,7 @@
 - Railway проект: `7db75e66-0b30-4ad3-bfbc-f85e3cf8349a`
 - Список проектов: [`src/gitlab/config.js`](../src/gitlab/config.js)
 
-Актуальные проекты на момент написания (ID → prod-ветка):
+Справочная таблица (держать в синхронизации с [`src/gitlab/config.js`](../src/gitlab/config.js)):
 
 | ID  | Путь                                | Prod-ветка |
 |-----|-------------------------------------|------------|
@@ -18,6 +18,8 @@
 | 81  | payment/adapters/matching           | master     |
 | 22  | payment/user-page-front             | main       |
 | 32  | payment/user-page-back              | main       |
+| 107 | payment/adapters/cyber-money        | main       |
+| 124 | payment/integration-log             | main       |
 | 125 | payment/ledger/ledger-service       | main       |
 | 136 | payment/adapters/matching-antifraud | main       |
 
@@ -61,7 +63,7 @@ if (-not $webhookToken) {
 $base = "https://git.chcadm.in/api/v4/projects"
 $headers = @{"PRIVATE-TOKEN" = $glToken}
 
-foreach ($id in @(51, 52, 81, 22, 32, 125, 136)) {
+foreach ($id in @(51, 52, 81, 22, 32, 107, 124, 125, 136)) {
   $hooks = Invoke-RestMethod -Uri "$base/$id/hooks" -Headers $headers
   $ourHooks = $hooks | Where-Object { $_.url -like "*railway.app*" }
   Write-Host "Project ${id}:"
@@ -87,7 +89,7 @@ $headers = @{"PRIVATE-TOKEN" = $glToken; "Content-Type" = "application/json"}
 $mrWebhookToken = $vars.GITLAB_MR_WEBHOOK_TOKEN
 if (-not $mrWebhookToken) { $mrWebhookToken = $webhookToken }
 
-foreach ($id in @(51, 52, 81, 22, 32, 125, 136)) {
+foreach ($id in @(51, 52, 81, 22, 32, 107, 124, 125, 136)) {
   $body = @{
     url = "$botUrl/webhooks/gitlab/merge-request"
     merge_requests_events = $true
@@ -99,7 +101,7 @@ foreach ($id in @(51, 52, 81, 22, 32, 125, 136)) {
 }
 
 # Pipeline webhook
-foreach ($id in @(51, 52, 81, 22, 32, 125, 136)) {
+foreach ($id in @(51, 52, 81, 22, 32, 107, 124, 125, 136)) {
   $body = @{
     url = "$botUrl/webhooks/gitlab/pipeline"
     pipeline_events = $true
@@ -122,7 +124,7 @@ foreach ($id in @(51, 52, 81, 22, 32, 125, 136)) {
    { id: <project_id>, targetBranch: 'master' }, // или 'main'
    ```
 
-2. Обновить таблицу проектов в этом файле и в [`docs/gitlab-repositories.md`](./gitlab-repositories.md).
+2. Обновить таблицу проектов в этом файле, в [`docs/gitlab-repositories.md`](./gitlab-repositories.md) и в примерах PowerShell (шаги 2–3 выше).
 
 3. Создать оба webhook для нового проекта (Шаг 3 выше, но только для нового ID).
 
