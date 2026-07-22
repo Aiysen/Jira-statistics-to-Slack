@@ -5,8 +5,13 @@ const { getGitlabProjects } = require('../gitlab/config');
 const DEDUP_WINDOW_MS = 60 * 60 * 1000;
 const MR_CONFLICT_NOTE_MARKER = '[jira-deploy-bot:conflict]';
 const JIRA_KEY_REGEX = /([A-Z][A-Z0-9]+-\d+)/;
+const FROM_TEST_MARKER = 'from-test';
 // После создания MR GitLab может ещё вычислять merge_status; ждём и делаем один повторный запрос
 const MERGE_STATUS_CHECK_DELAY_MS = 2000;
+
+function isFromTestBranch(name) {
+  return name.includes(FROM_TEST_MARKER);
+}
 
 class WebhookHandler {
   constructor(gitlabClient, slackClient, jiraBaseURL, deployTracker = null, jiraClient = null) {
@@ -118,16 +123,41 @@ class WebhookHandler {
         return { projectId, ...projectInfo, status: 'no_branch' };
       }
 
-      if (branches.length > 1) {
+      const ignoredFromTest = branches
+        .filter(b => isFromTestBranch(b.name))
+        .map(b => b.name);
+      const candidates = branches.filter(b => !isFromTestBranch(b.name));
+
+      if (candidates.length === 0) {
+        return {
+          projectId,
+          ...projectInfo,
+          status: 'only_from_test',
+          ignoredFromTest
+        };
+      }
+
+      if (candidates.length > 1) {
         return {
           projectId,
           ...projectInfo,
           status: 'multiple_branches',
-          branches: branches.map(b => b.name)
+          branches: candidates.map(b => b.name),
+          ...(ignoredFromTest.length > 0 ? { ignoredFromTest } : {})
         };
       }
 
-      return await this._processBranch(issueKey, summary, project, branches[0].name, projectInfo);
+      const result = await this._processBranch(
+        issueKey,
+        summary,
+        project,
+        candidates[0].name,
+        projectInfo
+      );
+      if (ignoredFromTest.length === 0) {
+        return result;
+      }
+      return { ...result, ignoredFromTest };
 
     } catch (error) {
       logger.error('Failed to process project for deploy-ready', {
@@ -320,29 +350,46 @@ class WebhookHandler {
   _formatProjectResult(result) {
     const prefix = `• ${this._formatProjectLabel(result)}:`;
     const conflictSuffix = this._formatConflictSuffix(result);
+    const ignoredSuffix = this._formatIgnoredFromTestSuffix(result);
 
     switch (result.status) {
       case 'created':
-        return `${prefix} <${result.mrUrl}|${result.mrRef}> — создан${conflictSuffix}`;
+        return `${prefix} <${result.mrUrl}|${result.mrRef}> — создан${conflictSuffix}${ignoredSuffix}`;
       case 'existing':
-        return `${prefix} <${result.mrUrl}|${result.mrRef}> — уже существует${conflictSuffix}`;
+        return `${prefix} <${result.mrUrl}|${result.mrRef}> — уже существует${conflictSuffix}${ignoredSuffix}`;
       case 'no_branch':
         return `${prefix} ветка не найдена`;
       case 'multiple_branches': {
         const list = result.branches.map(b => `\`${b}\``).join(', ');
-        return `${prefix} несколько веток: ${list} — нужно разобраться вручную`;
+        return `${prefix} несколько веток: ${list} — нужно разобраться вручную${ignoredSuffix}`;
+      }
+      case 'only_from_test': {
+        const list = (result.ignoredFromTest || []).map(b => `\`${b}\``).join(', ');
+        return `${prefix} только ветки с "from-test": ${list} — проигнорированы, MR не создан`;
       }
       case 'multiple_mrs': {
         const details = result.mrs.map(mr => this._formatProjectResult(mr)).join('\n');
         return `${prefix} несколько веток обработано:\n${details}`;
       }
       case 'empty_diff':
-        return `${prefix} diff пустой — MR не создан`;
+        return `${prefix} diff пустой — MR не создан${ignoredSuffix}`;
       case 'error':
-        return `${prefix} ошибка — ${result.errorMessage}`;
+        return `${prefix} ошибка — ${result.errorMessage}${ignoredSuffix}`;
       default:
         return `${prefix} неизвестный результат`;
     }
+  }
+
+  _formatIgnoredFromTestSuffix(result) {
+    const ignored = result.ignoredFromTest;
+    if (!ignored || ignored.length === 0) {
+      return '';
+    }
+    const list = ignored.map(b => `\`${b}\``).join(', ');
+    if (ignored.length === 1) {
+      return ` (ветка ${list} проигнорирована из-за "from-test")`;
+    }
+    return ` (ветки ${list} проигнорированы из-за "from-test")`;
   }
 
   _formatManualMergeRequestMessage(issueKey, jiraUrl, mr, projectInfo) {

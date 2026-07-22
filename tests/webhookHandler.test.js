@@ -72,6 +72,66 @@ describe('WebhookHandler._processProject', () => {
     expect(gitlab.createMergeRequest).not.toHaveBeenCalled();
   });
 
+  test('from-test: creates MR when one candidate remains after ignoring from-test', async () => {
+    const gitlab = makeGitlabClient({
+      searchBranchesByIssueKey: jest.fn().mockResolvedValue([
+        { name: 'CPAYMENT-1000/report-date-filter-msk' },
+        { name: 'CPAYMENT-1000/report-date-filter-msk-from-test' }
+      ])
+    });
+    const handler = new WebhookHandler(gitlab, makeSlackClient());
+
+    const result = await handler._processProject(issueKey, summary, project);
+
+    expect(result.status).toBe('created');
+    expect(result.ignoredFromTest).toEqual([
+      'CPAYMENT-1000/report-date-filter-msk-from-test'
+    ]);
+    expect(gitlab.createMergeRequest).toHaveBeenCalledWith(
+      51,
+      'CPAYMENT-1000/report-date-filter-msk',
+      'master',
+      'CPAYMENT-1000: Test task'
+    );
+  });
+
+  test('from-test: still multiple_branches when two candidates remain', async () => {
+    const gitlab = makeGitlabClient({
+      searchBranchesByIssueKey: jest.fn().mockResolvedValue([
+        { name: 'feature/CPAYMENT-1000' },
+        { name: 'bugfix/CPAYMENT-1000' },
+        { name: 'CPAYMENT-1000/hotfix-from-test' }
+      ])
+    });
+    const handler = new WebhookHandler(gitlab, makeSlackClient());
+
+    const result = await handler._processProject(issueKey, summary, project);
+
+    expect(result.status).toBe('multiple_branches');
+    expect(result.branches).toEqual(['feature/CPAYMENT-1000', 'bugfix/CPAYMENT-1000']);
+    expect(result.ignoredFromTest).toEqual(['CPAYMENT-1000/hotfix-from-test']);
+    expect(gitlab.createMergeRequest).not.toHaveBeenCalled();
+  });
+
+  test('from-test: only_from_test when all branches contain from-test', async () => {
+    const gitlab = makeGitlabClient({
+      searchBranchesByIssueKey: jest.fn().mockResolvedValue([
+        { name: 'CPAYMENT-1000/fix-from-test' },
+        { name: 'CPAYMENT-1000/another-from-test' }
+      ])
+    });
+    const handler = new WebhookHandler(gitlab, makeSlackClient());
+
+    const result = await handler._processProject(issueKey, summary, project);
+
+    expect(result.status).toBe('only_from_test');
+    expect(result.ignoredFromTest).toEqual([
+      'CPAYMENT-1000/fix-from-test',
+      'CPAYMENT-1000/another-from-test'
+    ]);
+    expect(gitlab.createMergeRequest).not.toHaveBeenCalled();
+  });
+
   test('existing: returns link when MR already open', async () => {
     const gitlab = makeGitlabClient({
       searchBranchesByIssueKey: jest.fn().mockResolvedValue([
@@ -536,6 +596,55 @@ describe('WebhookHandler._formatProjectResult', () => {
       '• <https://git.chcadm.in/group/repo|group/repo> (Project 22): ' +
       'несколько веток: `CPAYMENT-1417/sentry-replay`, `CPAYMENT-1417/sentry-replay-test` — ' +
       'нужно разобраться вручную'
+    );
+  });
+
+  test('created: mentions ignored from-test branch', () => {
+    const result = handler._formatProjectResult({
+      projectId: 22,
+      projectName: 'group/repo',
+      projectUrl: 'https://git.chcadm.in/group/repo',
+      status: 'created',
+      mrUrl: 'https://git.chcadm.in/group/repo/-/merge_requests/1',
+      mrRef: 'group/repo!1',
+      hasConflict: false,
+      ignoredFromTest: ['CPAYMENT-1642/report-date-filter-msk-from-test']
+    });
+
+    expect(result).toContain('создан');
+    expect(result).toContain(
+      'ветка `CPAYMENT-1642/report-date-filter-msk-from-test` проигнорирована из-за "from-test"'
+    );
+  });
+
+  test('multiple_branches: mentions ignored from-test branches', () => {
+    const result = handler._formatProjectResult({
+      projectId: 22,
+      projectName: 'group/repo',
+      projectUrl: 'https://git.chcadm.in/group/repo',
+      status: 'multiple_branches',
+      branches: ['feature/X-1', 'bugfix/X-1'],
+      ignoredFromTest: ['X-1/a-from-test', 'X-1/b-from-test']
+    });
+
+    expect(result).toContain('несколько веток: `feature/X-1`, `bugfix/X-1`');
+    expect(result).toContain(
+      'ветки `X-1/a-from-test`, `X-1/b-from-test` проигнорированы из-за "from-test"'
+    );
+  });
+
+  test('only_from_test: lists ignored branches', () => {
+    const result = handler._formatProjectResult({
+      projectId: 22,
+      projectName: 'group/repo',
+      projectUrl: 'https://git.chcadm.in/group/repo',
+      status: 'only_from_test',
+      ignoredFromTest: ['CPAYMENT-1000/fix-from-test']
+    });
+
+    expect(result).toBe(
+      '• <https://git.chcadm.in/group/repo|group/repo> (Project 22): ' +
+      'только ветки с "from-test": `CPAYMENT-1000/fix-from-test` — проигнорированы, MR не создан'
     );
   });
 
