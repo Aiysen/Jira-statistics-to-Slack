@@ -823,8 +823,154 @@ describe('WebhookHandler branch hint in deploy message', () => {
 
     await handler.handleDeployReady('CPAYMENT-1417', null, 'Внедрить Sentry Replay');
 
-    expect(jiraClient.getIssueAllComments).not.toHaveBeenCalled();
+    expect(jiraClient.getIssueAllComments).toHaveBeenCalledTimes(1);
     const message = slack.postDeployNotification.mock.calls[0][0];
     expect(message).not.toContain('рекомендовал загружать в ветку');
+  });
+});
+
+describe('WebhookHandler._hasDeployConditionInComments', () => {
+  const handler = new WebhookHandler(makeGitlabClient(), makeSlackClient());
+
+  function makeComment(text) {
+    return {
+      author: { displayName: 'Author' },
+      body: {
+        type: 'doc',
+        version: 1,
+        content: [{ type: 'paragraph', content: [{ type: 'text', text }] }]
+      }
+    };
+  }
+
+  test('returns true when comment contains a known phrase', () => {
+    const comments = [makeComment('Смотрите Порядок загрузки сервисов')];
+    expect(handler._hasDeployConditionInComments(comments)).toBe(true);
+  });
+
+  test('returns true for case-insensitive match', () => {
+    const comments = [makeComment('ПОСЛЕ ЗАГРУЗКИ В ПРОД ТРЕБУЕТСЯ рестарт')];
+    expect(handler._hasDeployConditionInComments(comments)).toBe(true);
+  });
+
+  test('returns true for each configured phrase', () => {
+    const phrases = [
+      'в прод грузить нельзя, пока',
+      'порядок загрузки',
+      'приоритет загрузки',
+      'загружать стоит в порядке',
+      'после загрузки в прод требуется'
+    ];
+    for (const phrase of phrases) {
+      expect(handler._hasDeployConditionInComments([makeComment(`Note: ${phrase}`)])).toBe(true);
+    }
+  });
+
+  test('returns false when no phrase matches', () => {
+    const comments = [makeComment('Обычный комментарий без условий')];
+    expect(handler._hasDeployConditionInComments(comments)).toBe(false);
+  });
+
+  test('returns false for empty comments', () => {
+    expect(handler._hasDeployConditionInComments([])).toBe(false);
+  });
+});
+
+describe('WebhookHandler deploy condition warning in deploy message', () => {
+  const warningText = 'дополнительные условия загрузки на продакшен';
+
+  test('includes warning when comment has deploy condition phrase', async () => {
+    const gitlab = makeGitlabClient({
+      searchBranchesByIssueKey: jest.fn().mockResolvedValue([
+        { name: 'CPAYMENT-1417/feature' }
+      ])
+    });
+    const slack = makeSlackClient();
+    const jiraClient = {
+      getIssueAllComments: jest.fn().mockResolvedValue([
+        {
+          author: { displayName: 'Author' },
+          body: {
+            type: 'doc',
+            version: 1,
+            content: [{
+              type: 'paragraph',
+              content: [{ type: 'text', text: 'Приоритет загрузки: сначала backend' }]
+            }]
+          }
+        }
+      ])
+    };
+    const handler = new WebhookHandler(gitlab, slack, 'https://jira.example.com', null, jiraClient);
+
+    await handler.handleDeployReady('CPAYMENT-1417', null, 'Feature');
+
+    const message = slack.postDeployNotification.mock.calls[0][0];
+    expect(message).toContain('⚠️');
+    expect(message).toContain(warningText);
+    expect(jiraClient.getIssueAllComments).toHaveBeenCalledTimes(1);
+  });
+
+  test('does not include warning when comments have no matching phrase', async () => {
+    const gitlab = makeGitlabClient({
+      searchBranchesByIssueKey: jest.fn().mockResolvedValue([
+        { name: 'CPAYMENT-1417/feature' }
+      ])
+    });
+    const slack = makeSlackClient();
+    const jiraClient = {
+      getIssueAllComments: jest.fn().mockResolvedValue([
+        {
+          author: { displayName: 'Author' },
+          body: {
+            type: 'doc',
+            version: 1,
+            content: [{
+              type: 'paragraph',
+              content: [{ type: 'text', text: 'Всё ок, можно грузить' }]
+            }]
+          }
+        }
+      ])
+    };
+    const handler = new WebhookHandler(gitlab, slack, 'https://jira.example.com', null, jiraClient);
+
+    await handler.handleDeployReady('CPAYMENT-1417', null, 'Feature');
+
+    const message = slack.postDeployNotification.mock.calls[0][0];
+    expect(message).not.toContain(warningText);
+  });
+
+  test('fetches comments once even without multiple_branches', async () => {
+    const gitlab = makeGitlabClient({
+      searchBranchesByIssueKey: jest.fn().mockResolvedValue([
+        { name: 'CPAYMENT-1417/feature' }
+      ])
+    });
+    const slack = makeSlackClient();
+    const jiraClient = {
+      getIssueAllComments: jest.fn().mockResolvedValue([])
+    };
+    const handler = new WebhookHandler(gitlab, slack, 'https://jira.example.com', null, jiraClient);
+
+    await handler.handleDeployReady('CPAYMENT-1417', null, 'Feature');
+
+    expect(jiraClient.getIssueAllComments).toHaveBeenCalledTimes(1);
+    expect(jiraClient.getIssueAllComments).toHaveBeenCalledWith('CPAYMENT-1417');
+  });
+
+  test('does not include warning when jiraClient is not provided', async () => {
+    const gitlab = makeGitlabClient({
+      searchBranchesByIssueKey: jest.fn().mockResolvedValue([
+        { name: 'CPAYMENT-1417/feature' }
+      ])
+    });
+    const slack = makeSlackClient();
+    const handler = new WebhookHandler(gitlab, slack, 'https://jira.example.com');
+
+    await handler.handleDeployReady('CPAYMENT-1417', null, 'Feature');
+
+    const message = slack.postDeployNotification.mock.calls[0][0];
+    expect(message).not.toContain(warningText);
   });
 });

@@ -8,6 +8,15 @@ const JIRA_KEY_REGEX = /([A-Z][A-Z0-9]+-\d+)/;
 const FROM_TEST_MARKER = 'from-test';
 // После создания MR GitLab может ещё вычислять merge_status; ждём и делаем один повторный запрос
 const MERGE_STATUS_CHECK_DELAY_MS = 2000;
+const DEPLOY_CONDITION_PHRASES = [
+  'в прод грузить нельзя, пока',
+  'порядок загрузки',
+  'приоритет загрузки',
+  'загружать стоит в порядке',
+  'после загрузки в прод требуется'
+];
+const DEPLOY_CONDITION_WARNING =
+  '⚠️ *Внимание:* в комментариях задачи указаны дополнительные условия загрузки на продакшен. Проверьте комментарии перед выкладкой.';
 
 function isFromTestBranch(name) {
   return name.includes(FROM_TEST_MARKER);
@@ -39,8 +48,16 @@ class WebhookHandler {
       projects.map(project => this._processProject(issueKey, summary, project))
     );
 
-    const branchHint = await this._fetchBranchHint(issueKey, results);
-    const message = this._formatSlackMessage(issueKey, summary, results, branchHint);
+    const comments = await this._fetchIssueComments(issueKey);
+    const branchHint = this._resolveBranchHint(comments, results);
+    const hasDeployCondition = this._hasDeployConditionInComments(comments);
+    const message = this._formatSlackMessage(
+      issueKey,
+      summary,
+      results,
+      branchHint,
+      hasDeployCondition
+    );
     const slackResult = await this.slackClient.postDeployNotification(message);
     this.slackClient.rememberDeployThread(issueKey, slackResult?.ts);
     this.deployTracker?.rememberIssue(issueKey, summary, this.jiraBaseURL, slackResult?.ts, results);
@@ -327,7 +344,7 @@ class WebhookHandler {
     logger.info('Conflict note posted to MR', { projectId, mrIid });
   }
 
-  _formatSlackMessage(issueKey, summary, results, branchHint = null) {
+  _formatSlackMessage(issueKey, summary, results, branchHint = null, hasDeployCondition = false) {
     const jiraUrl = `${this.jiraBaseURL}/browse/${issueKey}`;
     let message = `🚀 *Ready for Deploy* — ${issueKey}: ${summary}\n`;
     message += `Jira: <${jiraUrl}|${issueKey}>\n`;
@@ -342,6 +359,10 @@ class WebhookHandler {
 
     if (branchHint) {
       message += `\nИз комментария *${branchHint.author}* рекомендовал загружать в ветку \`${branchHint.branch}\`\n`;
+    }
+
+    if (hasDeployCondition) {
+      message += `\n${DEPLOY_CONDITION_WARNING}\n`;
     }
 
     return message.trimEnd();
@@ -435,19 +456,31 @@ class WebhookHandler {
     return ` — ⚠️ *конфликт с \`${result.targetBranch}\`*, нужно разрешить ${mention}`;
   }
 
-  async _fetchBranchHint(issueKey, results) {
-    if (!this.jiraClient) return null;
-
-    const multipleResult = results.find(r => r.status === 'multiple_branches');
-    if (!multipleResult) return null;
+  async _fetchIssueComments(issueKey) {
+    if (!this.jiraClient) return [];
 
     try {
-      const comments = await this.jiraClient.getIssueAllComments(issueKey);
-      return this._findBranchHintInComments(comments, multipleResult.branches);
+      return await this.jiraClient.getIssueAllComments(issueKey);
     } catch (error) {
-      logger.warn('Failed to fetch Jira comments for branch hint', { issueKey, error: error.message });
-      return null;
+      logger.warn('Failed to fetch Jira comments', { issueKey, error: error.message });
+      return [];
     }
+  }
+
+  _resolveBranchHint(comments, results) {
+    const multipleResult = results.find(r => r.status === 'multiple_branches');
+    if (!multipleResult) return null;
+    return this._findBranchHintInComments(comments, multipleResult.branches);
+  }
+
+  _hasDeployConditionInComments(comments) {
+    for (const comment of comments) {
+      const text = this._extractAdfText(comment.body).toLowerCase();
+      if (DEPLOY_CONDITION_PHRASES.some(phrase => text.includes(phrase))) {
+        return true;
+      }
+    }
+    return false;
   }
 
   _findBranchHintInComments(comments, branches) {
