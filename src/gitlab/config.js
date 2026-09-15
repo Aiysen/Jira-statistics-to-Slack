@@ -10,6 +10,7 @@ const GITLAB_PROJECTS = [
   { id: 125, targetBranch: 'main' },
   { id: 136, targetBranch: 'main' },
   { id: 117, targetBranch: 'main' },
+  { id: 139, targetBranch: 'main' },
 ];
 
 function getGitlabProjects() {
