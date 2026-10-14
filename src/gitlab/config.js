@@ -1,4 +1,5 @@
 const GITLAB_PROJECTS = [
+  { id: 8, targetBranch: 'master' },
   { id: 51, targetBranch: 'master' },
   { id: 52, targetBranch: 'master' },
   { id: 54, targetBranch: 'master' },

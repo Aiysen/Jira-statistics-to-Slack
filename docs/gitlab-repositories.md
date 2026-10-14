@@ -9,6 +9,7 @@
 
 | Project ID | Prod-ветка (target branch для MR) |
 |------------|------------------------------------|
+| 8          | `master`                           |
 | 51         | `master`                           |
 | 52         | `master`                           |
 | 54         | `master`                           |
