@@ -28,6 +28,7 @@
 | 139 | payment/insight                     | main       |
 | 108 | payment/adapters/receipt-verify     | main       |
 | 143 | payment/adapters/merchant-integration-middleware | main |
+| 145 | payment/fx-rate-service                         | main |
 
 ## Нужные webhooks на каждый проект
 
@@ -69,7 +70,7 @@ if (-not $webhookToken) {
 $base = "https://git.chcadm.in/api/v4/projects"
 $headers = @{"PRIVATE-TOKEN" = $glToken}
 
-foreach ($id in @(8, 51, 52, 54, 81, 22, 32, 107, 124, 125, 136, 117, 139, 108, 143)) {
+foreach ($id in @(8, 51, 52, 54, 81, 22, 32, 107, 124, 125, 136, 117, 139, 108, 143, 145)) {
   $hooks = Invoke-RestMethod -Uri "$base/$id/hooks" -Headers $headers
   $ourHooks = $hooks | Where-Object { $_.url -like "*railway.app*" }
   Write-Host "Project ${id}:"
@@ -95,7 +96,7 @@ $headers = @{"PRIVATE-TOKEN" = $glToken; "Content-Type" = "application/json"}
 $mrWebhookToken = $vars.GITLAB_MR_WEBHOOK_TOKEN
 if (-not $mrWebhookToken) { $mrWebhookToken = $webhookToken }
 
-foreach ($id in @(8, 51, 52, 54, 81, 22, 32, 107, 124, 125, 136, 117, 139, 108, 143)) {
+foreach ($id in @(8, 51, 52, 54, 81, 22, 32, 107, 124, 125, 136, 117, 139, 108, 143, 145)) {
   $body = @{
     url = "$botUrl/webhooks/gitlab/merge-request"
     merge_requests_events = $true
@@ -107,7 +108,7 @@ foreach ($id in @(8, 51, 52, 54, 81, 22, 32, 107, 124, 125, 136, 117, 139, 108, 
 }
 
 # Pipeline webhook
-foreach ($id in @(8, 51, 52, 54, 81, 22, 32, 107, 124, 125, 136, 117, 139, 108, 143)) {
+foreach ($id in @(8, 51, 52, 54, 81, 22, 32, 107, 124, 125, 136, 117, 139, 108, 143, 145)) {
   $body = @{
     url = "$botUrl/webhooks/gitlab/pipeline"
     pipeline_events = $true
